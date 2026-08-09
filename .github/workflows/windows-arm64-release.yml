@@ -77,7 +77,10 @@ jobs:
           & .\mvnw.cmd -B versions:set "-DnewVersion=$env:APP_VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'Unable to set the application version.' }
 
-          & .\mvnw.cmd -B clean package -Pwin "-Djavafx.platform=win-aarch64" -DskipTests
+          # Maven Central has no Windows ARM64 JavaFX classifier. These jars are
+          # compile-only here and excluded from target/mods; ARM64 JavaFX comes
+          # from the verified Liberica jmods used by jlink below.
+          & .\mvnw.cmd -B clean package -Pwin "-Djavafx.platform=win" -DskipTests
           if ($LASTEXITCODE -ne 0) { throw 'Maven package failed.' }
 
           Copy-Item -LiteralPath LICENSE.txt -Destination target
