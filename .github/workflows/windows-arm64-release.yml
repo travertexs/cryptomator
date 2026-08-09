@@ -148,6 +148,7 @@ jobs:
             '--java-options', '-Dcryptomator.integrationsWin.autoStartShellLinkName=Cryptomator',
             '--java-options', '-Dcryptomator.integrationsWin.keychainPaths=@{appdata}/Cryptomator/keychain.json;@{userhome}/AppData/Roaming/Cryptomator/keychain.json',
             '--java-options', '-Dcryptomator.integrationsWin.windowsHelloKeychainPaths=@{appdata}/Cryptomator/windowsHelloKeychain.json',
+            '--java-options', '-Dcryptomator.keychain.disabledProviders=org.cryptomator.windows.keychain.WindowsHelloKeychainAccess',
             '--java-options', '-Dcryptomator.disableUpdateCheck=true',
             '--java-options', '-XX:ErrorFile=@{localappdata}/Cryptomator/cryptomator_crash.log',
             '--java-options', '-Dcryptomator.hub.enableTrustOnFirstUse=true',
@@ -251,6 +252,11 @@ jobs:
               if (Test-Path smoke.stdout.txt) { Get-Content smoke.stdout.txt }
               Write-Host '--- stderr ---'
               if (Test-Path smoke.stderr.txt) { Get-Content smoke.stderr.txt }
+              Get-ChildItem -LiteralPath appdir\Cryptomator -Filter 'hs_err_pid*.log' -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                  Write-Host "--- $($_.Name) ---"
+                  Get-Content -LiteralPath $_.FullName
+                }
               throw "Cryptomator exited during the ARM64 smoke test with code $($process.ExitCode)."
             }
             Write-Host 'Cryptomator remained running for 20 seconds on the native ARM64 runner.'

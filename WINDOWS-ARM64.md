@@ -1,6 +1,6 @@
 # Windows ARM64 downstream build
 
-This fork adds a native Windows ARM64 build without changing Cryptomator's application source.
+This fork adds a native Windows ARM64 build with one downstream compatibility switch for the Windows keychain providers.
 
 ## What is native
 
@@ -19,7 +19,7 @@ OpenJDK's `jpackage` still lacks reliable native Windows ARM64 MSI generation. A
 3. Optionally install [WinFsp 2.1 or newer](https://github.com/winfsp/winfsp/releases) for the WinFsp volume type.
 4. Run `Cryptomator.exe` from the extracted `Cryptomator` directory.
 
-The downstream binary is unsigned, so Windows may show a SmartScreen warning. Automatic in-app updates are disabled because the official Windows updater currently points to x64 packages.
+The downstream binary is unsigned, so Windows may show a SmartScreen warning. The Windows Hello keychain backend is disabled in this preview after its native availability probe crashed on the ARM64 validation runner; the standard Windows Data Protection keychain remains available. Automatic in-app updates are disabled because the official Windows updater currently points to x64 packages.
 
 ## Build and upstream synchronization
 
