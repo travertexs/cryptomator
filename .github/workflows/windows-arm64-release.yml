@@ -114,8 +114,8 @@ jobs:
 
           Push-Location $integrationSource
           try {
-            $compileCommand = ('""{0}" && make install ARCH=arm64"' -f $vcvars)
-            & cmd.exe /d /s /c $compileCommand
+            $compileCommand = ('call "{0}" && make install ARCH=arm64' -f $vcvars)
+            & cmd.exe /d /c $compileCommand
             if ($LASTEXITCODE -ne 0) { throw 'Unable to compile the patched ARM64 integration.' }
           } finally {
             Pop-Location
