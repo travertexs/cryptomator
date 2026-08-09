@@ -1,0 +1,31 @@
+diff --git a/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp b/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp
+--- a/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp
++++ b/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp
+@@ -2,6 +2,7 @@
+ #include "org_cryptomator_windows_keychain_WindowsHello_Native.h"
+ #include <winrt/Windows.Foundation.h>
+ #include <winrt/Windows.Security.Credentials.h>
++#include <winrt/Windows.Security.Credentials.UI.h>
+ #include <winrt/Windows.Security.Cryptography.h>
+ #include <winrt/Windows.Security.Cryptography.Core.h>
+ #include <winrt/Windows.Storage.Streams.h>
+@@ -17,5 +18,6 @@
+ using namespace winrt;
+ using namespace Windows::Security::Credentials;
++using namespace Windows::Security::Credentials::UI;
+ using namespace Windows::Security::Cryptography;
+ using namespace Windows::Security::Cryptography::Core;
+ using namespace Windows::Storage::Streams;
+@@ -224,5 +226,12 @@ jboolean JNICALL Java_org_cryptomator_windows_keychain_WindowsHello_00024Native_i
+     try {
+         winrt::init_apartment(winrt::apartment_type::single_threaded);
+ 
++        // KeyCredentialManager can fail-fast when the current user has no usable
++        // Windows Hello keyset. Use the documented consent-device probe first so
++        // unconfigured accounts safely report this provider as unsupported.
++        const auto consentAvailability = UserConsentVerifier::CheckAvailabilityAsync().get();
++        if (consentAvailability != UserConsentVerifierAvailability::Available) {
++            return JNI_FALSE;
++        }
+         auto keyCredentialAvailable = KeyCredentialManager::IsSupportedAsync().get();
+         return keyCredentialAvailable ? JNI_TRUE : JNI_FALSE;
