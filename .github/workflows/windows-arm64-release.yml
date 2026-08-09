@@ -112,6 +112,8 @@ jobs:
           $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvarsarm64.bat'
           if (-not (Test-Path -LiteralPath $vcvars)) { throw "ARM64 compiler environment is unavailable: $vcvars" }
 
+          New-Item -ItemType Directory -Path (Join-Path $integrationSource 'target') -Force | Out-Null
+
           Push-Location $integrationSource
           try {
             $compileCommand = ('call "{0}" && make install ARCH=arm64' -f $vcvars)
