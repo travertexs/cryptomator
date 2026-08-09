@@ -77,7 +77,7 @@ jobs:
           & .\mvnw.cmd -B versions:set "-DnewVersion=$env:APP_VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'Unable to set the application version.' }
 
-          & .\mvnw.cmd -B clean package -Pwin -DskipTests
+          & .\mvnw.cmd -B clean package -Pwin "-Djavafx.platform=win-aarch64" -DskipTests
           if ($LASTEXITCODE -ne 0) { throw 'Maven package failed.' }
 
           Copy-Item -LiteralPath LICENSE.txt -Destination target
