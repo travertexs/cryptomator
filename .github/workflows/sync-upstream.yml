@@ -1,0 +1,64 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream-develop
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge cryptomator/develop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Merge upstream changes
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git remote add upstream https://github.com/cryptomator/cryptomator.git
+          git fetch upstream develop --tags
+
+          before=$(git rev-parse HEAD)
+          if ! git merge --no-edit upstream/develop; then
+            git merge --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          after=$(git rev-parse HEAD)
+
+          if [[ "$before" != "$after" ]]; then
+            git push origin HEAD:develop
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report a merge conflict
+        if: steps.merge.outputs.conflict == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Automatic upstream sync needs attention" \
+            --body "The scheduled workflow could not merge cryptomator/develop into this fork's develop branch. Resolve the conflict locally, push the merge, and close this issue." \
+            --repo "$GITHUB_REPOSITORY"
+          exit 1

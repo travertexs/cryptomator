@@ -1,0 +1,318 @@
+name: Build and release Windows ARM64
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Git tag for the downstream ARM64 release
+        required: true
+        default: windows-arm64-1.20.0-preview.1
+      app_version:
+        description: Version shown by Cryptomator
+        required: true
+        default: 1.20.0-arm64-preview.1
+      package_version:
+        description: Numeric Windows package version
+        required: true
+        default: 1.20.0.1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-arm64-release
+  cancel-in-progress: false
+
+env:
+  APP_VERSION: ${{ inputs.app_version }}
+  PACKAGE_VERSION: ${{ inputs.package_version }}
+  RELEASE_TAG: ${{ inputs.release_tag }}
+  ASSET_NAME: Cryptomator-${{ inputs.app_version }}-windows-arm64.zip
+
+jobs:
+  build-and-release:
+    name: Native Windows ARM64 application
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Liberica JDK with JavaFX
+        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        with:
+          distribution: liberica
+          java-version: '26'
+          java-package: jdk+fx
+          architecture: aarch64
+          cache: maven
+          check-latest: true
+
+      - name: Verify ARM64 build environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $architecture = (& "$env:JAVA_HOME\bin\java.exe" -XshowSettings:properties -version 2>&1 |
+            Select-String 'os.arch =').ToString()
+          if ($architecture -notmatch 'aarch64') {
+            throw "Expected an aarch64 JDK, got: $architecture"
+          }
+
+          @('javafx.base.jmod', 'javafx.controls.jmod', 'javafx.fxml.jmod', 'javafx.graphics.jmod') |
+            ForEach-Object {
+              $jmod = Join-Path "$env:JAVA_HOME\jmods" $_
+              if (-not (Test-Path -LiteralPath $jmod)) {
+                throw "Missing JavaFX jmod: $jmod"
+              }
+            }
+
+      - name: Compile application with Maven Wrapper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\mvnw.cmd -B versions:set "-DnewVersion=$env:APP_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to set the application version.' }
+
+          & .\mvnw.cmd -B clean package -Pwin -DskipTests
+          if ($LASTEXITCODE -ne 0) { throw 'Maven package failed.' }
+
+          Copy-Item -LiteralPath LICENSE.txt -Destination target
+          Get-ChildItem -LiteralPath target -Filter 'cryptomator-*.jar' |
+            Copy-Item -Destination target\mods
+
+      - name: Create native ARM64 runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $modules = @(
+            'java.base', 'java.desktop', 'java.instrument', 'java.logging',
+            'java.naming', 'java.net.http', 'java.scripting', 'java.sql', 'java.xml',
+            'javafx.base', 'javafx.graphics', 'javafx.controls', 'javafx.fxml',
+            'jdk.crypto.cryptoki', 'jdk.crypto.ec', 'jdk.crypto.mscapi',
+            'jdk.unsupported', 'jdk.accessibility', 'jdk.management.jfr', 'java.compiler'
+          ) -join ','
+
+          $jlinkArgs = @(
+            '--verbose',
+            '--output', 'runtime',
+            '--module-path', "$env:JAVA_HOME\jmods",
+            '--add-modules', $modules,
+            '--strip-native-commands',
+            '--no-header-files',
+            '--no-man-pages',
+            '--strip-debug',
+            '--compress', 'zip-0'
+          )
+          & "$env:JAVA_HOME\bin\jlink.exe" @jlinkArgs
+          if ($LASTEXITCODE -ne 0) { throw 'jlink failed.' }
+
+      - name: Create native ARM64 application image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $jpackageArgs = @(
+            '--verbose',
+            '--type', 'app-image',
+            '--runtime-image', 'runtime',
+            '--input', 'target/libs',
+            '--module-path', 'target/mods',
+            '--module', 'org.cryptomator.desktop/org.cryptomator.launcher.Cryptomator',
+            '--dest', 'appdir',
+            '--name', 'Cryptomator',
+            '--vendor', 'Skymatic GmbH',
+            '--copyright', '(C) 2016 - 2026 Skymatic GmbH',
+            '--app-version', "$env:PACKAGE_VERSION",
+            '--java-options', '--enable-preview',
+            '--java-options', '--enable-native-access=javafx.graphics,org.cryptomator.jfuse.win,org.cryptomator.integrations.win',
+            '--java-options', '-Xss5m',
+            '--java-options', '-Xmx256m',
+            '--java-options', "-Dcryptomator.appVersion=$env:APP_VERSION",
+            '--java-options', '-Dfile.encoding=utf-8',
+            '--java-options', '-Djava.net.useSystemProxies=true',
+            '--java-options', '-Dcryptomator.adminConfigPath=C:/ProgramData/Cryptomator/config.properties',
+            '--java-options', '-Dcryptomator.logDir=@{localappdata}/Cryptomator',
+            '--java-options', '-Dcryptomator.settingsPath=@{appdata}/Cryptomator/settings.json;@{userhome}/AppData/Roaming/Cryptomator/settings.json',
+            '--java-options', '-Dcryptomator.p12Path=@{appdata}/Cryptomator/key.p12;@{userhome}/AppData/Roaming/Cryptomator/key.p12',
+            '--java-options', '-Dcryptomator.ipcSocketPath=@{localappdata}/Cryptomator/ipc.socket',
+            '--java-options', '-Dcryptomator.mountPointsDir=@{userhome}/Cryptomator',
+            '--java-options', '-Dcryptomator.loopbackAlias=cryptomator-vault',
+            '--java-options', '-Dcryptomator.showTrayIcon=true',
+            '--java-options', "-Dcryptomator.buildNumber=windows-arm64-$env:GITHUB_RUN_NUMBER",
+            '--java-options', '-Dcryptomator.integrationsWin.autoStartShellLinkName=Cryptomator',
+            '--java-options', '-Dcryptomator.integrationsWin.keychainPaths=@{appdata}/Cryptomator/keychain.json;@{userhome}/AppData/Roaming/Cryptomator/keychain.json',
+            '--java-options', '-Dcryptomator.integrationsWin.windowsHelloKeychainPaths=@{appdata}/Cryptomator/windowsHelloKeychain.json',
+            '--java-options', '-Dcryptomator.disableUpdateCheck=true',
+            '--java-options', '-XX:ErrorFile=@{localappdata}/Cryptomator/cryptomator_crash.log',
+            '--java-options', '-Dcryptomator.hub.enableTrustOnFirstUse=true',
+            '--resource-dir', 'dist/win/resources',
+            '--icon', 'dist/win/resources/Cryptomator.ico',
+            '--add-launcher', 'Cryptomator (Debug)=dist/win/debug-launcher.properties'
+          )
+          & "$env:JAVA_HOME\bin\jpackage.exe" @jpackageArgs
+          if ($LASTEXITCODE -ne 0) { throw 'jpackage failed.' }
+
+          # The upstream contrib copy contains an x64-only legacy jnidispatch.dll.
+          # The current app no longer needs that loose DLL, so keep it out of the ARM64 image.
+          Get-ChildItem -LiteralPath dist\win\contrib -File |
+            Where-Object Name -NE 'jnidispatch.dll' |
+            Copy-Item -Destination appdir\Cryptomator
+
+          @"
+          Cryptomator Windows ARM64 downstream preview
+
+          This is an unofficial, unsigned ARM64 build from:
+          https://github.com/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA
+
+          Optional: Install WinFsp 2.1 or newer to use the WinFsp volume type:
+          https://github.com/winfsp/winfsp/releases
+
+          Start Cryptomator.exe from this directory. Automatic in-app updates are
+          disabled because official updates currently provide x64 Windows packages.
+          "@ | Set-Content -LiteralPath appdir\Cryptomator\README-WINDOWS-ARM64.txt -Encoding utf8
+
+      - name: Verify native binaries and ARM64 integration resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Get-PeMachine([string] $Path) {
+            $stream = [IO.File]::OpenRead($Path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "Not a PE file: $Path"
+              }
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+
+          $arm64 = 0xAA64
+          $files = @(
+            'appdir\Cryptomator\Cryptomator.exe',
+            'appdir\Cryptomator\Cryptomator (Debug).exe'
+          )
+          foreach ($name in @('jvm.dll', 'glass.dll', 'prism_d3d.dll')) {
+            $match = Get-ChildItem -LiteralPath appdir\Cryptomator\runtime -Recurse -File -Filter $name |
+              Select-Object -First 1
+            if ($null -eq $match) { throw "Missing runtime binary: $name" }
+            $files += $match.FullName
+          }
+
+          foreach ($file in $files) {
+            $machine = Get-PeMachine $file
+            if ($machine -ne $arm64) {
+              throw ('Expected ARM64 PE machine 0xAA64 for {0}; got 0x{1:X4}.' -f $file, $machine)
+            }
+            Write-Host ('Verified ARM64: {0}' -f $file)
+          }
+
+          if (Test-Path -LiteralPath appdir\Cryptomator\jnidispatch.dll) {
+            throw 'The x64-only loose jnidispatch.dll must not be present in the ARM64 image.'
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $integrationJar = Get-ChildItem -LiteralPath appdir\Cryptomator\app\mods -Filter 'integrations-win-*.jar' |
+            Select-Object -First 1
+          if ($null -eq $integrationJar) { throw 'integrations-win module is missing.' }
+          $archive = [IO.Compression.ZipFile]::OpenRead($integrationJar.FullName)
+          try {
+            $entryNames = $archive.Entries.FullName
+            if ($entryNames -notcontains 'integrations-arm64.dll') {
+              throw 'integrations-win does not contain integrations-arm64.dll.'
+            }
+          } finally {
+            $archive.Dispose()
+          }
+
+      - name: Launch smoke test on Windows ARM64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'appdir\Cryptomator\Cryptomator (Debug).exe'
+          $process = Start-Process -FilePath $exe -WorkingDirectory 'appdir\Cryptomator' `
+            -RedirectStandardOutput smoke.stdout.txt -RedirectStandardError smoke.stderr.txt -PassThru
+          try {
+            Start-Sleep -Seconds 20
+            $process.Refresh()
+            if ($process.HasExited) {
+              Write-Host '--- stdout ---'
+              if (Test-Path smoke.stdout.txt) { Get-Content smoke.stdout.txt }
+              Write-Host '--- stderr ---'
+              if (Test-Path smoke.stderr.txt) { Get-Content smoke.stderr.txt }
+              throw "Cryptomator exited during the ARM64 smoke test with code $($process.ExitCode)."
+            }
+            Write-Host 'Cryptomator remained running for 20 seconds on the native ARM64 runner.'
+          } finally {
+            if (-not $process.HasExited) {
+              & taskkill.exe /PID $process.Id /T /F
+            }
+          }
+
+      - name: Package portable release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -LiteralPath appdir\Cryptomator -DestinationPath "$env:ASSET_NAME" -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath "$env:ASSET_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:ASSET_NAME" | Set-Content -LiteralPath "$env:ASSET_NAME.sha256" -Encoding ascii
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cryptomator-windows-arm64
+          path: |
+            ${{ env.ASSET_NAME }}
+            ${{ env.ASSET_NAME }}.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          @"
+          Unofficial Windows ARM64 preview built entirely on GitHub's native Windows ARM64 runner.
+
+          Source commit: https://github.com/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA
+
+          Validation performed by this workflow:
+
+          - ARM64 JDK and JavaFX module checks
+          - Maven packaging with the repository's Maven Wrapper
+          - PE machine checks for the launchers, JVM, and JavaFX runtime
+          - presence of the ARM64 Windows integration library
+          - a 20-second native launch smoke test
+
+          This downstream build is unsigned, so Windows may show a SmartScreen warning.
+          Extract the ZIP and run `Cryptomator.exe`. WinFsp 2.1 or newer is optional
+          and available from https://github.com/winfsp/winfsp/releases.
+
+          Automatic in-app updates are disabled to prevent replacement by an official
+          x64 Windows package.
+          "@ | Set-Content -LiteralPath release-notes.md -Encoding utf8
+
+          & gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload "$env:RELEASE_TAG" "$env:ASSET_NAME" "$env:ASSET_NAME.sha256" `
+              --clobber --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to update the existing ARM64 release.' }
+          } else {
+            & gh release create "$env:RELEASE_TAG" "$env:ASSET_NAME" "$env:ASSET_NAME.sha256" `
+              --target "$env:GITHUB_SHA" `
+              --title "Cryptomator $env:APP_VERSION for Windows ARM64" `
+              --notes-file release-notes.md `
+              --prerelease `
+              --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create the ARM64 release.' }
+          }
