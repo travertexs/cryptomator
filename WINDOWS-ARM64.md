@@ -4,7 +4,7 @@ This fork adds a native Windows ARM64 build, with a downstream patch to the nati
 
 ## What is native
 
-The release workflow builds a complete patched OpenJDK runtime on GitHub's `windows-2025` runner, targeting ARM64. It then runs on GitHub's `windows-11-arm` runner to test that runtime and produce an ARM64 `jpackage` application image with an ARM64 JVM, JavaFX runtime, launcher, Cryptomator Windows integrations, and WinFsp interface. No build runs on the user's computer.
+The release workflow builds a complete patched OpenJDK runtime on GitHub's `windows-2022` runner with Visual Studio 2022, targeting ARM64. It then runs on GitHub's `windows-11-arm` runner to test that runtime and produce an ARM64 `jpackage` application image with an ARM64 JVM, JavaFX runtime, launcher, Cryptomator Windows integrations, and WinFsp interface. No build runs on the user's computer.
 
 The workflow checks the PE machine type of the launchers and key runtime DLLs and then launches Cryptomator for 20 seconds on the ARM64 runner before publishing the release.
 

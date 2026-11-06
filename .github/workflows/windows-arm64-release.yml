@@ -36,7 +36,7 @@ jobs:
   build-runtime:
     name: Build patched ARM64 OpenJDK runtime
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[arm64-release]')
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 120
     permissions:
       contents: read
@@ -80,6 +80,7 @@ jobs:
             --with-conf-name=windows-aarch64-hello \
             --openjdk-target=aarch64-unknown-cygwin \
             --with-boot-jdk="$(cygpath -u "$JAVA_HOME")" \
+            --with-toolchain-version=2022 \
             --with-msvc-toolset-version=14.44 \
             --with-debug-level=release \
             --with-version-opt=cryptomator-arm64-preview3 \
@@ -110,6 +111,19 @@ jobs:
           name: patched-openjdk-arm64
           path: .arm64/runtime-build/*.zip
           if-no-files-found: error
+
+      - name: Preserve runtime build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openjdk-build-diagnostics
+          include-hidden-files: true
+          path: |
+            .arm64/jdk-source/build/*/configure.log
+            .arm64/jdk-source/build/*/config.log
+            .arm64/jdk-source/build/*/make-support/failure-summary
+            .arm64/jdk-source/config.log
+          if-no-files-found: ignore
 
   build-and-release:
     name: Native Windows ARM64 application
