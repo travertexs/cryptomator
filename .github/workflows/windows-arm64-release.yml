@@ -15,12 +15,17 @@ on:
         description: Numeric Windows package version
         required: true
         default: 1.20.0.3
+      runtime_run_id:
+        description: Optional prior Actions run with an identical successfully built runtime
+        required: false
+        default: ''
   push:
     branches:
       - develop
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: windows-arm64-release
@@ -35,7 +40,7 @@ env:
 jobs:
   build-runtime:
     name: Build patched ARM64 OpenJDK runtime
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[arm64-release]')
+    if: (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[arm64-release]')) && !inputs.runtime_run_id
     runs-on: windows-2022
     timeout-minutes: 120
     permissions:
@@ -128,7 +133,7 @@ jobs:
   build-and-release:
     name: Native Windows ARM64 application
     needs: build-runtime
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[arm64-release]')
+    if: always() && !cancelled() && (needs.build-runtime.result == 'success' || (needs.build-runtime.result == 'skipped' && github.event_name == 'workflow_dispatch' && inputs.runtime_run_id != ''))
     runs-on: windows-11-arm
     timeout-minutes: 90
 
@@ -186,11 +191,53 @@ jobs:
               }
             }
 
+      - name: Verify reusable runtime provenance
+        if: inputs.runtime_run_id != '' && github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNTIME_RUN_ID -notmatch '^[0-9]+$') { throw 'Invalid runtime run ID.' }
+          function Read-GitHub([string]$endpoint) {
+            $json = & gh api $endpoint
+            if ($LASTEXITCODE -ne 0) { throw "GitHub lookup failed: $endpoint" }
+            $json | ConvertFrom-Json
+          }
+          $run = Read-GitHub "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:RUNTIME_RUN_ID"
+          if ($run.head_repository.full_name -ne $env:GITHUB_REPOSITORY -or $run.head_branch -ne 'develop' -or $run.event -notin @('push', 'workflow_dispatch')) {
+            throw 'Runtime must come from a trusted develop build in this fork.'
+          }
+          $jobs = Read-GitHub "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:RUNTIME_RUN_ID/jobs?per_page=100"
+          if (-not ($jobs.jobs | Where-Object { $_.name -eq 'Build patched ARM64 OpenJDK runtime' -and $_.conclusion -eq 'success' })) {
+            throw 'The referenced runtime build did not succeed.'
+          }
+          foreach ($path in @('dist/win/arm64/hotspot-hello-exceptions.patch', 'dist/win/arm64/openjdk-msys2-make.patch')) {
+            $previous = Read-GitHub "repos/$env:GITHUB_REPOSITORY/contents/${path}?ref=$($run.head_sha)"
+            $current = (& git rev-parse "HEAD:$path").Trim()
+            if ($LASTEXITCODE -ne 0 -or $current -ne $previous.sha) { throw "Runtime patch changed: $path" }
+          }
+          $oldWorkflow = Read-GitHub "repos/$env:GITHUB_REPOSITORY/contents/.github/workflows/windows-arm64-release.yml?ref=$($run.head_sha)"
+          $oldText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($oldWorkflow.content))
+          $newText = Get-Content -LiteralPath .github/workflows/windows-arm64-release.yml -Raw
+          function Runtime-Configuration([string]$text) {
+            $match = [regex]::Match($text.Replace("`r`n", "`n"), '(?ms)^  build-runtime:\n(?<job>.*?)^  build-and-release:')
+            if (-not $match.Success) { throw 'Cannot identify runtime build configuration.' }
+            [regex]::Replace($match.Groups['job'].Value, '(?m)^    if:.*\n', '').Trim()
+          }
+          if ((Runtime-Configuration $oldText) -cne (Runtime-Configuration $newText)) {
+            throw 'Runtime build settings changed; build a fresh runtime instead.'
+          }
+          Write-Host "Verified unchanged runtime patches and build settings from run $env:RUNTIME_RUN_ID, commit $($run.head_sha)."
+
       - name: Download patched ARM64 runtime
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: patched-openjdk-arm64
           path: .arm64/runtime-build
+          run-id: ${{ inputs.runtime_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Activate patched runtime with ARM64 JavaFX
         shell: pwsh
@@ -258,10 +305,18 @@ jobs:
           foreach ($mode in @('unhandled', 'access-violation')) {
             $log = Join-Path $env:GITHUB_WORKSPACE ".arm64/probe/$mode-fatal.log"
             & "$env:JAVA_HOME/bin/java.exe" --enable-native-access=ALL-UNNAMED "-XX:ErrorFile=$log" -cp .arm64/probe HotspotExceptionProbe $dll $mode
-            if ($LASTEXITCODE -eq 0) { throw "The runtime incorrectly swallowed $mode." }
-            if (-not (Test-Path -LiteralPath $log)) { throw "No fatal diagnostic produced for $mode." }
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) { throw "The runtime incorrectly swallowed $mode." }
+            $exitHex = '{0:X8}' -f ($exitCode -band 0xFFFFFFFFL)
             $expected = if ($mode -eq 'unhandled') { '0x80090016' } else { 'EXCEPTION_ACCESS_VIOLATION' }
-            if (-not (Select-String -LiteralPath $log -SimpleMatch $expected)) { throw "Wrong fatal diagnostic for $mode." }
+            $expectedExit = if ($mode -eq 'unhandled') { '80090016' } else { 'C0000005' }
+            $hasDiagnostic = (Test-Path -LiteralPath $log) -and [bool](Select-String -LiteralPath $log -SimpleMatch $expected)
+            # Windows can terminate with the original SEH code before HotSpot
+            # writes an hs_err log. Accept that exact fatal code, not any failure.
+            if (-not $hasDiagnostic -and $exitHex -ne $expectedExit) {
+              throw "Unexpected exit for ${mode}: 0x$exitHex, without the expected diagnostic."
+            }
+            Write-Host "${mode}: fatal exit 0x$exitHex; expected HotSpot diagnostic: $hasDiagnostic"
           }
           Write-Host 'Handled native errors survive; unhandled and access-violation errors remain fatal.'
           exit 0
