@@ -32,6 +32,11 @@ static void checkWorker() {
 
 int main() {
     try {
+        // Probe before ThreadPool tests can incidentally keep the MTA alive.
+        for (int i = 0; i < 8; ++i) {
+            std::cout << "Initial native availability call " << i << std::endl;
+            Java_org_cryptomator_windows_keychain_WindowsHello_00024Native_isSupported(nullptr, nullptr);
+        }
         // Match a JavaFX/STA caller, then an uninitialized background caller.
         winrt::init_apartment(winrt::apartment_type::single_threaded);
         for (int i = 0; i < 8; ++i) { checkWorker(); }
@@ -49,7 +54,8 @@ int main() {
             const auto supported = Java_org_cryptomator_windows_keychain_WindowsHello_00024Native_isSupported(nullptr, nullptr);
             std::cout << "Windows Hello supported on runner: " << (supported == JNI_TRUE) << std::endl;
         }
-        std::cout << "Windows Hello threading regression checks passed\n";
+        JNI_OnUnload(nullptr, nullptr);
+        std::cout << "Windows Hello threading and MTA lifetime regression checks passed\n";
         return 0;
     } catch (const winrt::hresult_error& error) {
         std::cerr << winrt::to_string(error.message()) << '\n';
