@@ -345,7 +345,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'JNI regression probe compilation failed.' }
           $dll = Join-Path $integrationSource 'src\main\resources\integrations-arm64.dll'
           & "$env:JAVA_HOME\bin\java.exe" --enable-native-access=ALL-UNNAMED -Xcheck:jni -cp .arm64\probe org.cryptomator.windows.keychain.WindowsHello $dll
-          if ($LASTEXITCODE -ne 0) { throw 'Windows Hello JNI regression probe failed.' }
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Filter 'hs_err_pid*.log' |
+              ForEach-Object { Get-Content -LiteralPath $_.FullName -TotalCount 160 }
+            throw 'Windows Hello JNI regression probe failed.'
+          }
 
       - name: Compile application with Maven Wrapper
         shell: pwsh

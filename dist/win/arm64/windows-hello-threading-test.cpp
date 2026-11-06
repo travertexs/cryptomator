@@ -44,8 +44,11 @@ int main() {
 
         // Exercise the actual KeyCredentialManager probe, without the old
         // consent-device preflight hiding it on an unconfigured CI account.
-        const auto supported = Java_org_cryptomator_windows_keychain_WindowsHello_00024Native_isSupported(nullptr, nullptr);
-        std::cout << "Windows Hello supported on runner: " << (supported == JNI_TRUE) << '\n';
+        for (int i = 0; i < 8; ++i) {
+            std::cout << "Native availability call " << i << std::endl;
+            const auto supported = Java_org_cryptomator_windows_keychain_WindowsHello_00024Native_isSupported(nullptr, nullptr);
+            std::cout << "Windows Hello supported on runner: " << (supported == JNI_TRUE) << std::endl;
+        }
         std::cout << "Windows Hello threading regression checks passed\n";
         return 0;
     } catch (const winrt::hresult_error& error) {
