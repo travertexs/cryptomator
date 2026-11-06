@@ -1,0 +1,18 @@
+diff --git a/src/hotspot/os/windows/os_windows.cpp b/src/hotspot/os/windows/os_windows.cpp
+--- a/src/hotspot/os/windows/os_windows.cpp
++++ b/src/hotspot/os/windows/os_windows.cpp
+@@ -2813,5 +2813,11 @@
+ #if defined(_M_ARM64)
+-  should_report_error = should_report_error &&
+-                        FAILED(exception_code) &&
+-                        (exception_code != EXCEPTION_UNCAUGHT_CXX_EXCEPTION);
++  // Windows Hello may raise NTE_* HRESULTs internally and catch them with SEH.
++  // A first-chance vectored handler runs before those native handlers. Let only
++  // this cryptography error facility continue to SEH; do not resume execution.
++  // Unhandled errors still reach topLevelUnhandledExceptionFilter below.
++  const bool is_crypto_hresult = (exception_code & 0xffff0000UL) == 0x80090000UL;
++  should_report_error = should_report_error &&
++                        FAILED(exception_code) &&
++                        !is_crypto_hresult &&
++                        (exception_code != EXCEPTION_UNCAUGHT_CXX_EXCEPTION);
+ #endif
