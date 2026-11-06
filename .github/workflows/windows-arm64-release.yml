@@ -6,15 +6,15 @@ on:
       release_tag:
         description: Git tag for the downstream ARM64 release
         required: true
-        default: windows-arm64-1.20.0-preview.2
+        default: windows-arm64-1.20.0-preview.3
       app_version:
         description: Version shown by Cryptomator
         required: true
-        default: 1.20.0-arm64-preview.2
+        default: 1.20.0-arm64-preview.3
       package_version:
         description: Numeric Windows package version
         required: true
-        default: 1.20.0.2
+        default: 1.20.0.3
   push:
     branches:
       - develop
@@ -27,10 +27,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_VERSION: ${{ inputs.app_version || '1.20.0-arm64-preview.2' }}
-  PACKAGE_VERSION: ${{ inputs.package_version || '1.20.0.2' }}
-  RELEASE_TAG: ${{ inputs.release_tag || 'windows-arm64-1.20.0-preview.2' }}
-  ASSET_NAME: Cryptomator-${{ inputs.app_version || '1.20.0-arm64-preview.2' }}-windows-arm64.zip
+  APP_VERSION: ${{ inputs.app_version || '1.20.0-arm64-preview.3' }}
+  PACKAGE_VERSION: ${{ inputs.package_version || '1.20.0.3' }}
+  RELEASE_TAG: ${{ inputs.release_tag || 'windows-arm64-1.20.0-preview.3' }}
+  ASSET_NAME: Cryptomator-${{ inputs.app_version || '1.20.0-arm64-preview.3' }}-windows-arm64.zip
 
 jobs:
   build-and-release:
@@ -93,12 +93,12 @@ jobs:
               }
             }
 
-      - name: Build ARM64 integration with safe Windows Hello detection
+      - name: Build ARM64 integration with Windows Hello thread isolation
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $integrationSource = Join-Path $env:GITHUB_WORKSPACE '.arm64\integrations-win'
-          $patch = Join-Path $env:GITHUB_WORKSPACE 'dist\win\arm64\windows-hello-availability.patch'
+          $patch = Join-Path $env:GITHUB_WORKSPACE 'dist\win\arm64\windows-hello-threading.patch'
 
           & git -C $integrationSource apply --check $patch
           if ($LASTEXITCODE -ne 0) { throw 'The Windows Hello patch no longer applies to integrations-win.' }
@@ -125,6 +125,32 @@ jobs:
 
           $dll = Join-Path $integrationSource 'src\main\resources\integrations-arm64.dll'
           if (-not (Test-Path -LiteralPath $dll)) { throw 'The patched ARM64 integration DLL was not produced.' }
+
+      - name: Test Windows Hello native threading and JNI failures
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $integrationSource = Join-Path $env:GITHUB_WORKSPACE '.arm64\integrations-win'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = (& $vswhere -latest -products * -property installationPath).Trim()
+          $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvarsarm64.bat'
+          Copy-Item -LiteralPath dist\win\arm64\windows-hello-threading-test.cpp -Destination $integrationSource
+          Push-Location $integrationSource
+          try {
+            $compile = ('call "{0}" && cl /EHsc /std:c++17 /W4 /I"src\main\headers" /I"{1}\include" /I"{1}\include\win32" windows-hello-threading-test.cpp /Fe:target\hello-threading-test.exe /Fo:target\hello-threading-test.obj /link crypt32.lib shell32.lib ole32.lib uuid.lib user32.lib Advapi32.lib windowsapp.lib' -f $vcvars, $env:JAVA_HOME)
+            & cmd.exe /d /c $compile
+            if ($LASTEXITCODE -ne 0) { throw 'Native regression probe compilation failed.' }
+            & .\target\hello-threading-test.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Native Windows Hello regression probe failed.' }
+          } finally {
+            Pop-Location
+          }
+          & "$env:JAVA_HOME\bin\javac.exe" -d .arm64\probe dist\win\arm64\WindowsHello.java
+          if ($LASTEXITCODE -ne 0) { throw 'JNI regression probe compilation failed.' }
+          $dll = Join-Path $integrationSource 'src\main\resources\integrations-arm64.dll'
+          & "$env:JAVA_HOME\bin\java.exe" --enable-native-access=ALL-UNNAMED -Xcheck:jni -cp .arm64\probe org.cryptomator.windows.keychain.WindowsHello $dll
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Hello JNI regression probe failed.' }
 
       - name: Compile application with Maven Wrapper
         shell: pwsh
@@ -243,8 +269,9 @@ jobs:
 
           Start Cryptomator.exe from this directory. Automatic in-app updates are
           disabled because official updates currently provide x64 Windows packages.
-          Windows Hello support is enabled. If Windows Hello is not configured for
-          the current user, Cryptomator safely falls back to Windows Data Protection.
+          Windows Hello runs on a dedicated background COM thread. Existing Hello
+          keys and saved-password format are preserved. PIN/biometric authentication
+          still requires validation on an enrolled Windows ARM64 device.
           "@ | Set-Content -LiteralPath appdir\Cryptomator\README-WINDOWS-ARM64.txt -Encoding utf8
 
       - name: Verify native binaries and ARM64 integration resources
@@ -314,13 +341,36 @@ jobs:
           }
           Write-Host 'Verified patched Windows Hello integration is ARM64.'
 
-      - name: Launch smoke test on Windows ARM64
+      - name: Launch smoke test with Windows Hello selected
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $exe = Resolve-Path 'appdir\Cryptomator\Cryptomator (Debug).exe'
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'cryptomator-hello-selected'
+          New-Item -ItemType Directory -Path $smokeDir -Force | Out-Null
+          @{ useKeychain = $true; keychainProvider = 'org.cryptomator.windows.keychain.WindowsHelloKeychainAccess'; directories = @() } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $smokeDir 'settings.json') -Encoding utf8
+          $cfg = 'appdir\Cryptomator\app\Cryptomator (Debug).cfg'
+          $originalCfg = Get-Content -LiteralPath $cfg -Raw
+          $smokePath = $smokeDir.Replace('\', '/')
+          $testOptions = @(
+            "java-options=-Dcryptomator.settingsPath=$smokePath/settings.json",
+            "java-options=-Dcryptomator.logDir=$smokePath",
+            "java-options=-Dcryptomator.ipcSocketPath=$smokePath/ipc.socket",
+            "java-options=-Dcryptomator.integrationsWin.windowsHelloKeychainPaths=$smokePath/windowsHelloKeychain.json",
+            "java-options=-Dcryptomator.integrationsWin.keychainPaths=$smokePath/keychain.json",
+            "java-options=-XX:ErrorFile=$smokePath/hs_err_pid%p.log"
+          )
+          $testCfg = $originalCfg
+          foreach ($option in $testOptions) {
+            $prefix = $option.Substring(0, $option.LastIndexOf('='))
+            $pattern = '(?m)^' + [regex]::Escape($prefix) + '=.*$'
+            if (-not [regex]::IsMatch($testCfg, $pattern)) { throw "Missing smoke-test option: $prefix" }
+            $testCfg = [regex]::Replace($testCfg, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $option })
+          }
+          Set-Content -LiteralPath $cfg -Value $testCfg -Encoding utf8 -NoNewline
           $process = Start-Process -FilePath $exe -WorkingDirectory 'appdir\Cryptomator' `
-            -RedirectStandardOutput smoke.stdout.txt -RedirectStandardError smoke.stderr.txt -PassThru
+            -WindowStyle Hidden -RedirectStandardOutput smoke.stdout.txt -RedirectStandardError smoke.stderr.txt -PassThru
           try {
             Start-Sleep -Seconds 20
             $process.Refresh()
@@ -329,7 +379,7 @@ jobs:
               if (Test-Path smoke.stdout.txt) { Get-Content smoke.stdout.txt }
               Write-Host '--- stderr ---'
               if (Test-Path smoke.stderr.txt) { Get-Content smoke.stderr.txt }
-              Get-ChildItem -LiteralPath appdir\Cryptomator -Filter 'hs_err_pid*.log' -ErrorAction SilentlyContinue |
+              Get-ChildItem -LiteralPath $smokeDir -Filter 'hs_err_pid*.log' -ErrorAction SilentlyContinue |
                 ForEach-Object {
                   Write-Host "--- $($_.Name) ---"
                   Get-Content -LiteralPath $_.FullName
@@ -338,6 +388,7 @@ jobs:
             }
             Write-Host 'Cryptomator remained running for 20 seconds on the native ARM64 runner.'
           } finally {
+            Set-Content -LiteralPath $cfg -Value $originalCfg -Encoding utf8 -NoNewline
             if (-not $process.HasExited) {
               & taskkill.exe /PID $process.Id /T /F
             }
@@ -385,11 +436,14 @@ jobs:
           - compilation and PE verification of the patched ARM64 Windows integration
           - a 20-second native launch smoke test with the Windows Hello provider enabled
 
-          Windows Hello support is enabled. The native availability check first uses
-          Windows' consent-device capability API, allowing machines without a configured
-          Hello keyset to fall back safely to Windows Data Protection. GitHub's hosted
-          runner cannot perform an interactive biometric or PIN authentication, so the
-          end-to-end Hello prompt must be exercised on a real Windows ARM64 device.
+          Windows Hello availability, encryption and decryption now run on a dedicated
+          MTA thread. This corrects blocking WinRT calls on an STA thread and prevents
+          a failed credential open from being dereferenced. The Hello key identifier
+          and saved-password encryption format are unchanged.
+          Native delayed-operation, error-propagation and JNI negative-input checks
+          run before packaging. Startup also runs with Hello selected in temporary
+          settings. GitHub's runner has no enrolled Hello identity: actual biometric
+          or PIN authentication remains unverified until tested on the user's device.
 
           This downstream build is unsigned, so Windows may show a SmartScreen warning.
           Extract the ZIP and run `Cryptomator.exe`. WinFsp 2.1 or newer is optional

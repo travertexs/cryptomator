@@ -1,6 +1,6 @@
 # Windows ARM64 downstream build
 
-This fork adds a native Windows ARM64 build without changing Cryptomator's application source.
+This fork adds a native Windows ARM64 build, with a downstream patch to the native Windows Hello integration.
 
 ## What is native
 
@@ -19,11 +19,12 @@ OpenJDK's `jpackage` still lacks reliable native Windows ARM64 MSI generation. A
 3. Optionally install [WinFsp 2.1 or newer](https://github.com/winfsp/winfsp/releases) for the WinFsp volume type.
 4. Run `Cryptomator.exe` from the extracted `Cryptomator` directory.
 
-The downstream binary is unsigned, so Windows may show a SmartScreen warning. Windows Hello and the standard Windows Data Protection keychain are available. The ARM64 workflow builds a small downstream patch that makes the Windows Hello availability check safely fall back when Hello is not configured for the current user. Automatic in-app updates are disabled because the official Windows updater currently points to x64 packages.
+The downstream binary is unsigned, so Windows may show a SmartScreen warning. Windows Hello and the standard Windows Data Protection keychain are available. The ARM64 workflow builds a downstream patch that executes Hello availability and password operations on a separate MTA worker. It also validates credential-open results before use. Existing Hello key identifiers and saved-password encryption are unchanged. Interactive PIN/biometric authentication requires validation on a real enrolled device. Automatic in-app updates are disabled because the official Windows updater currently points to x64 packages.
 
 ## Build and upstream synchronization
 
 - `.github/workflows/windows-arm64-release.yml` builds, validates, packages, and publishes the ARM64 prerelease entirely on GitHub Actions.
-- `dist/win/arm64/windows-hello-availability.patch` guards the upstream Windows Hello key-credential probe with Microsoft's documented consent-device availability check. The patch is applied and compiled only inside the ARM64 workflow.
+- `dist/win/arm64/windows-hello-threading.patch` corrects blocking WinRT operations on STA threads, initializes COM before cryptographic API use, and validates credential-open results. The patch is applied and compiled only inside the ARM64 workflow.
+- Native and JNI probes check pending asynchronous operations, exception propagation, malformed inputs, and the real availability API. The app smoke test uses temporary settings with Windows Hello selected. These checks cannot exercise a biometric/PIN prompt on an unenrolled runner.
 - `.github/workflows/sync-upstream.yml` merges `cryptomator/develop` into this fork's `develop` branch every day and can also be run manually.
 - No pull request is opened against the upstream Cryptomator repository.
