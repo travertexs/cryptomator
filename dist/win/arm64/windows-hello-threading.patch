@@ -1,3 +1,12 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -21,4 +21,4 @@
+-	cl -EHsc -std:c++17 -LD -W4 -guard:cf \
++	cl -EHsc -std:c++20 -LD -W4 -guard:cf \
+ 		-Fe"$(OUT_DLL)" \
+ 		-Fo"$(OUT_DIR)/" \
+ 		$(HEADERS) $(SOURCES) \
 diff --git a/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp b/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp
 --- a/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp
 +++ b/src/main/native/org_cryptomator_windows_keychain_WindowsHello_Native.cpp

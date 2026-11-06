@@ -138,7 +138,7 @@ jobs:
           Copy-Item -LiteralPath dist\win\arm64\windows-hello-threading-test.cpp -Destination $integrationSource
           Push-Location $integrationSource
           try {
-            $compile = ('call "{0}" && cl /EHsc /std:c++17 /W4 /I"src\main\headers" /I"{1}\include" /I"{1}\include\win32" windows-hello-threading-test.cpp /Fe:target\hello-threading-test.exe /Fo:target\hello-threading-test.obj /link crypt32.lib shell32.lib ole32.lib uuid.lib user32.lib Advapi32.lib windowsapp.lib' -f $vcvars, $env:JAVA_HOME)
+            $compile = ('call "{0}" && cl /EHsc /std:c++20 /W4 /I"src\main\headers" /I"{1}\include" /I"{1}\include\win32" windows-hello-threading-test.cpp /Fe:target\hello-threading-test.exe /Fo:target\hello-threading-test.obj /link crypt32.lib shell32.lib ole32.lib uuid.lib user32.lib Advapi32.lib windowsapp.lib' -f $vcvars, $env:JAVA_HOME)
             & cmd.exe /d /c $compile
             if ($LASTEXITCODE -ne 0) { throw 'Native regression probe compilation failed.' }
             & .\target\hello-threading-test.exe
