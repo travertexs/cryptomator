@@ -63,14 +63,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $patch = Join-Path $env:GITHUB_WORKSPACE 'dist\win\arm64\hotspot-hello-exceptions.patch'
-          # OpenJDK explicitly disables line-ending conversion; this repository
-          # does not. Normalize only this patch to the target source's LF format.
-          [IO.File]::WriteAllText($patch, [IO.File]::ReadAllText($patch).Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
-          git -C .arm64/jdk-source apply --check $patch
-          if ($LASTEXITCODE -ne 0) { throw 'OpenJDK exception patch no longer applies.' }
-          git -C .arm64/jdk-source apply $patch
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to patch OpenJDK.' }
+          foreach ($name in @('hotspot-hello-exceptions.patch', 'openjdk-msys2-make.patch')) {
+            $patch = Join-Path $env:GITHUB_WORKSPACE "dist/win/arm64/$name"
+            # OpenJDK disables line-ending conversion; this repository does not.
+            [IO.File]::WriteAllText($patch, [IO.File]::ReadAllText($patch).Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
+            git -C .arm64/jdk-source apply --check $patch
+            if ($LASTEXITCODE -ne 0) { throw "OpenJDK patch no longer applies: $name" }
+            git -C .arm64/jdk-source apply $patch
+            if ($LASTEXITCODE -ne 0) { throw "Unable to patch OpenJDK: $name" }
+          }
       - name: Configure patched OpenJDK
         working-directory: .arm64/jdk-source
         shell: msys2 {0}
@@ -97,7 +98,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory .arm64/runtime-build -Force | Out-Null
           Compress-Archive -Path .arm64/jdk-source/build/windows-aarch64-hello/images/jdk/* -DestinationPath .arm64/runtime-build/openjdk-arm64.zip
-          git -C .arm64/jdk-source add src/hotspot/os/windows/os_windows.cpp
+          git -C .arm64/jdk-source add src/hotspot/os/windows/os_windows.cpp make/autoconf/basic_tools.m4
           $tree = (git -C .arm64/jdk-source write-tree).Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Unable to record patched OpenJDK source.' }
           $sourceZip = Join-Path $env:GITHUB_WORKSPACE '.arm64/runtime-build/OpenJDK-26.0.2.1-arm64-preview.3-source.zip'

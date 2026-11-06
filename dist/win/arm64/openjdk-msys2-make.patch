@@ -1,0 +1,13 @@
+diff --git a/make/autoconf/basic_tools.m4 b/make/autoconf/basic_tools.m4
+--- a/make/autoconf/basic_tools.m4
++++ b/make/autoconf/basic_tools.m4
+@@ -150,3 +150,3 @@
+           elif test "x$OPENJDK_BUILD_OS_ENV" = "xwindows.msys2"; then
+-            MAKE_EXPECTED_ENV='msys'
++            MAKE_EXPECTED_ENV='cygwin|msys'
+           elif test "x$OPENJDK_BUILD_OS_ENV" = "xwindows.wsl1" || test "x$OPENJDK_BUILD_OS_ENV" = "xwindows.wsl2"; then
+@@ -161,3 +161,3 @@
+           MAKE_BUILT_FOR=`$MAKE_CANDIDATE --version | $GREP -i 'built for'`
+-          IS_MAKE_CORRECT_ENV=`$ECHO $MAKE_BUILT_FOR | $GREP $MAKE_EXPECTED_ENV`
++          IS_MAKE_CORRECT_ENV=`$ECHO $MAKE_BUILT_FOR | $GREP -E $MAKE_EXPECTED_ENV`
+         else
