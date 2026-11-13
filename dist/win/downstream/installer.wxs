@@ -1,9 +1,37 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="Cryptomator $(var.AppVersion) (travertexs $(var.Arch))" Manufacturer="travertexs downstream"
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Cryptomator $(var.AppVersion) ($(var.Arch))" Manufacturer="travertexs downstream"
            Version="$(var.Version)" UpgradeCode="$(var.UpgradeCode)" Language="1033" Scope="perMachine">
     <!-- A snapshot and its corrected build can have the same numeric MSI version. -->
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer downstream version is already installed."/>
     <MediaTemplate EmbedCab="yes"/>
+    <Icon Id="CryptomatorIcon" SourceFile="dist/win/resources/Cryptomator.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="CryptomatorIcon"/>
+    <Property Id="STARTMENUSHORTCUT" Value="1" Secure="yes"/>
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER"/>
+    <WixVariable Id="WixUIBannerBmp" Value="dist/win/resources/banner.bmp"/>
+    <WixVariable Id="WixUIDialogBmp" Value="dist/win/resources/background.bmp"/>
+    <WixVariable Id="WixUILicenseRtf" Value="dist/win/resources/license.rtf"/>
+    <UI>
+      <Dialog Id="ShortcutPromptDlg" Width="370" Height="270" Title="[ProductName] Setup" NoMinimize="yes">
+        <Control Id="Banner" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="yes" Text="!(loc.InstallDirDlgBannerBitmap)"/>
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="255" Height="16" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Shortcuts"/>
+        <Control Id="Info" Type="Text" X="25" Y="24" Width="280" Height="15" Transparent="yes" Text="Choose the shortcuts to create."/>
+        <Control Id="Line" Type="Line" X="0" Y="44" Width="370" Height="0"/>
+        <Control Id="Menu" Type="CheckBox" X="20" Y="140" Width="305" Height="18" Property="STARTMENUSHORTCUT" CheckBoxValue="1" Text="Create a Start menu shortcut"/>
+        <Control Id="Bottom" Type="Line" X="0" Y="234" Width="370" Height="0"/>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="InstallDirDlg"/>
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg"/>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg"/>
+        </Control>
+      </Dialog>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ShortcutPromptDlg" Order="10"/>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ShortcutPromptDlg" Condition="NOT Installed" Order="10"/>
+    </UI>
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Cryptomator-travertexs-$(var.Arch)"/>
     </StandardDirectory>
@@ -13,10 +41,12 @@
         <Exclude Files="!(bindpath.image)\Cryptomator.exe"/>
       </Files>
       <Component Directory="INSTALLFOLDER" Guid="*">
-        <File Id="Launcher" Source="!(bindpath.image)\Cryptomator.exe" KeyPath="yes">
-          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Advertise="yes"
-                    Name="Cryptomator (travertexs $(var.Arch))" WorkingDirectory="INSTALLFOLDER"/>
-        </File>
+        <File Id="Launcher" Source="!(bindpath.image)\Cryptomator.exe" KeyPath="yes"/>
+      </Component>
+      <Component Id="MenuShortcut" Directory="INSTALLFOLDER" Guid="*" Condition="STARTMENUSHORTCUT">
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Target="[#Launcher]" Icon="CryptomatorIcon"
+                  Name="Cryptomator ($(var.Arch))" WorkingDirectory="INSTALLFOLDER"/>
+        <RegistryValue Root="HKLM" Key="Software\travertexs\Cryptomator\$(var.Arch)" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
       </Component>
     </Feature>
   </Package>

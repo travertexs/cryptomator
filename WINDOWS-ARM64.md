@@ -6,7 +6,7 @@ This fork publishes regular, unofficial Windows releases built from upstream's d
 
 1. In Windows Settings → System → About, check **System type**. Download the **arm64.msi** for an ARM-based processor or the **x64.msi** for Intel/AMD. A portable ZIP is also available for each architecture.
 2. Verify the download against its accompanying SHA-256 file. The installers are unsigned. Exit other Cryptomator processes before installing or switching versions.
-3. Run the MSI and open Cryptomator from the Start menu. The fork has separate installer identities and installation directories from upstream. It uses your existing Cryptomator settings and vaults. Keep your normal vault password.
+3. Double-click the MSI. The wizard shows Welcome, the license, the destination folder, the Start-menu shortcut choice, confirmation, installation progress and Finish. Reopening the same MSI offers maintenance. If you keep the shortcut selected, open **Cryptomator (arm64)** or **Cryptomator (x64)** from Start. The fork retains its separate installer identity and default directory, so an existing fork installation is upgraded rather than duplicated. Existing settings and vaults are used. Keep your normal vault password.
 4. WinFsp is optional and not bundled. For the WinFsp volume type use [WinFsp 2.1 or newer](https://github.com/winfsp/winfsp/releases). In-app update checks are disabled for these downstream packages; download updates here.
 
 ## Build and validation

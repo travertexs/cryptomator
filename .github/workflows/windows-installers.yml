@@ -65,7 +65,7 @@ jobs:
       APP_VERSION: ${{ needs.version.outputs.app }}
       PACKAGE_VERSION: ${{ needs.version.outputs.numeric }}
       TARGET_ARCH: ${{ matrix.arch }}
-      TEST_SUPERSEDED: ${{ contains(github.event.head_commit.message, '[replace-release-443708450]') }}
+      REFRESH_WIZARD: ${{ contains(github.event.head_commit.message, '[refresh-wizard-443788845]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -461,6 +461,13 @@ jobs:
       - name: Build MSI and test install, installed startup and uninstall
         shell: pwsh
         run: ./dist/win/downstream/installer-test.ps1 -Arch $env:TARGET_ARCH -Version $env:APP_VERSION -NumericVersion $env:PACKAGE_VERSION
+      - name: Save installer UI diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wizard-diagnostics-${{ matrix.arch }}
+          path: ${{ runner.temp }}/wizard-${{ matrix.arch }}/*.log
+          if-no-files-found: ignore
       - name: Include corresponding modified OpenJDK sources
         if: matrix.arch == 'arm64'
         shell: pwsh
@@ -483,12 +490,22 @@ jobs:
       contents: write
       actions: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: windows-*
           path: packages
           merge-multiple: true
+      - name: Refresh only the two MSIs and their checksums on the verified existing release
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[refresh-wizard-443788845]')
+        working-directory: packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ../dist/win/downstream/refresh-wizard-assets.sh
       - name: Verify complete asset set and publish regular fork release
+        if: "!contains(github.event.head_commit.message, '[refresh-wizard-443788845]')"
         working-directory: packages
         shell: bash
         env:
@@ -514,23 +531,3 @@ jobs:
           notes="Regular, unofficial downstream Windows release built from the upstream development branch plus this fork's Windows Hello fixes. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. These unsigned MSIs install separately from upstream Cryptomator. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Cryptomator $APP_VERSION for Windows (ARM64 and x64)" --notes "$notes" --draft
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
-      - name: Retire the specifically superseded Nov 13 release after verifying its replacement
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[replace-release-443708450]')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          api="repos/$GITHUB_REPOSITORY"
-          [[ "$GITHUB_REPOSITORY" == travertexs/cryptomator && "$APP_VERSION" == 1.20.0-SNAPSHOT ]]
-          new="windows-$APP_VERSION"
-          old="windows-1.20.0"
-          [[ "$(gh api "$api/git/ref/tags/$new" --jq '.object.sha')" == "$GITHUB_SHA" ]]
-          gh api "$api/releases/tags/$new" | jq -e --arg tag "$new" --arg v "$APP_VERSION" '
-            .tag_name == $tag and .draft == false and .prerelease == false and
-            ([.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $n |
-            (["arm64","x64"] | all(.[]; . as $a | ($n | index("Cryptomator-"+$v+"-windows-"+$a+".msi")) != null)))' >/dev/null
-          [[ "$(gh api "$api/releases/tags/$old" --jq .id)" == 443708450 ]]
-          [[ "$(gh api "$api/git/ref/tags/$old" --jq '.object.sha')" == ae1fde1ea5df575d545be7a43fb809047b0cace2 ]]
-          gh api --method DELETE "$api/releases/443708450"
-          gh api --method DELETE "$api/git/refs/tags/$old"
