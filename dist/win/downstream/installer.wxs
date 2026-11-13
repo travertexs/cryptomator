@@ -2,7 +2,18 @@
   <Package Name="Cryptomator $(var.AppVersion) ($(var.Arch))" Manufacturer="travertexs downstream"
            Version="$(var.Version)" UpgradeCode="$(var.UpgradeCode)" Language="1033" Scope="perMachine">
     <!-- A snapshot and its corrected build can have the same numeric MSI version. -->
+    <?if $(var.Arch) = "arm64" ?>
+    <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer Cryptomator version is already installed."/>
+    <!-- Migrate the retired ARM64 fork family using MSI ownership, never by deleting its directory. -->
+    <Upgrade Id="A7D02CE3-73DA-4D70-9DBF-8E7F7E0F7459">
+      <UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" Maximum="$(var.Version)" IncludeMaximum="yes" Property="LEGACYARM64" MigrateFeatures="no"/>
+      <UpgradeVersion Minimum="$(var.Version)" IncludeMinimum="no" OnlyDetect="yes" Property="NEWERLEGACYARM64"/>
+    </Upgrade>
+    <Launch Condition="Installed OR NOT NEWERLEGACYARM64" Message="A newer ARM64 Cryptomator installation exists."/>
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute"/>
+    <?else?>
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer downstream version is already installed."/>
+    <?endif?>
     <MediaTemplate EmbedCab="yes"/>
     <Icon Id="CryptomatorIcon" SourceFile="dist/win/resources/Cryptomator.ico"/>
     <Property Id="ARPPRODUCTICON" Value="CryptomatorIcon"/>
@@ -33,10 +44,36 @@
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ShortcutPromptDlg" Condition="NOT Installed" Order="10"/>
     </UI>
     <StandardDirectory Id="ProgramFiles64Folder">
+      <?if $(var.Arch) = "arm64" ?>
+      <Directory Id="INSTALLFOLDER" Name="Cryptomator"/>
+      <?else?>
       <Directory Id="INSTALLFOLDER" Name="Cryptomator-travertexs-$(var.Arch)"/>
+      <?endif?>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder"/>
     <Feature Id="Complete" Title="Cryptomator" Level="1">
+      <?if $(var.Arch) = "arm64" ?>
+      <Component Directory="INSTALLFOLDER" Id="UpstreamRegistration" Guid="*">
+        <RegistryValue Root="HKLM" Key="Software\Skymatic GmbH\Cryptomator\$(var.Version)" Name="ProductCode" Value="[ProductCode]" Type="string" KeyPath="yes"/>
+      </Component>
+      <Component Directory="INSTALLFOLDER" Id="UpstreamAssociations" Guid="*">
+        <File Id="VaultIcon" Source="dist/win/resources/Cryptomator-Vault.ico" KeyPath="yes"/>
+        <!-- Non-advertised verbs from the official MSI. Do not alter UserChoice. -->
+        <ProgId Id="progidc09ad15393a23d2fa9ebb7a73954c60b" Description="Cryptomator Vault File" Icon="VaultIcon">
+          <Extension Id="cryptomator" Advertise="no" ContentType="application/vnd.cryptomator.vault">
+            <MIME ContentType="application/vnd.cryptomator.vault" Default="yes"/>
+            <Verb Id="open" Command="Open with Cryptomator" TargetFile="Launcher" Argument="&quot;%1&quot; %*"/>
+          </Extension>
+        </ProgId>
+        <ProgId Id="Cryptomator.Encrypted.1" Description="Cryptomator Encrypted Data" Icon="VaultIcon">
+          <Extension Id="c9r" Advertise="no" ContentType="application/vnd.cryptomator.encrypted">
+            <MIME ContentType="application/vnd.cryptomator.encrypted" Default="yes"/>
+          </Extension>
+          <Extension Id="c9s" Advertise="no" ContentType="application/vnd.cryptomator.encrypted"/>
+          <Extension Id="c9u" Advertise="no" ContentType="application/vnd.cryptomator.encrypted"/>
+        </ProgId>
+      </Component>
+      <?endif?>
       <Files Directory="INSTALLFOLDER" Include="!(bindpath.image)\**">
         <Exclude Files="!(bindpath.image)\Cryptomator.exe"/>
       </Files>
@@ -46,7 +83,11 @@
       <Component Id="MenuShortcut" Directory="INSTALLFOLDER" Guid="*" Condition="STARTMENUSHORTCUT">
         <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Target="[#Launcher]" Icon="CryptomatorIcon"
                   Name="Cryptomator ($(var.Arch))" WorkingDirectory="INSTALLFOLDER"/>
+        <?if $(var.Arch) = "arm64" ?>
+        <RegistryValue Root="HKCU" Key="Software\Skymatic GmbH\Cryptomator\$(var.Version)" Name="ProductCode" Value="[ProductCode]" Type="string" KeyPath="yes"/>
+        <?else?>
         <RegistryValue Root="HKLM" Key="Software\travertexs\Cryptomator\$(var.Arch)" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
+        <?endif?>
       </Component>
     </Feature>
   </Package>

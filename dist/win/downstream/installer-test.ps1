@@ -5,10 +5,10 @@ $ErrorActionPreference = 'Stop'
 $expectedNative = if ($Arch -eq 'arm64') { 'Arm64' } else { 'X64' }
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne $expectedNative) { throw 'Wrong native Windows runner' }
 $image = (Resolve-Path appdir/Cryptomator).Path
-$uuid = if ($Arch -eq 'arm64') { 'A7D02CE3-73DA-4D70-9DBF-8E7F7E0F7459' } else { '9FDD5F11-9382-487D-93FA-0AD53762C44B' }
+$uuid = if ($Arch -eq 'arm64') { 'BDA45523-42B1-4CAE-9354-A45475ED4775' } else { '9FDD5F11-9382-487D-93FA-0AD53762C44B' }
 $out = New-Item -ItemType Directory -Force release
 $msi = Join-Path $out.FullName "Cryptomator-$Version-windows-$Arch.msi"
-if ($env:REFRESH_WIZARD -eq 'true') {
+if ($env:ARM64_LAYOUT_REFRESH -eq 'true') {
   # A packaging-only refresh must wrap the exact already-published app payload.
   $hash = if ($Arch -eq 'arm64') { '76c7db63ce70b0b070e0e7c7e177fea862a93aa57816e52939ba0931d2293b1d' } else { '68c1db1c73cc7927300ac4d60ccdd71c2cc6a46029aa84e92476fbc37fb0e510' }
   $portable = Join-Path $env:RUNNER_TEMP "published-app-$Arch.zip"
@@ -35,7 +35,7 @@ $info = $installer.SummaryInformation($msi, 0)
 $template = $info.Property(7)
 if (($template -split ';')[0] -ine $Arch) { throw "Wrong MSI platform: $template" }
 Write-Host "Verified MSI platform: $template"
-$installed = Join-Path $env:ProgramFiles "Cryptomator-travertexs-$Arch"
+$installed = if ($Arch -eq 'arm64') { Join-Path $env:ProgramFiles 'Cryptomator' } else { Join-Path $env:ProgramFiles "Cryptomator-travertexs-$Arch" }
 if (Test-Path -LiteralPath $installed) { throw 'Refusing to test over an existing installation.' }
 function Invoke-Msi([string]$verb,[string]$log,[string]$package=$msi) {
   $p = Start-Process msiexec.exe -ArgumentList "$verb ""$package"" /qn /norestart /l*v ""$env:RUNNER_TEMP/$log""" -PassThru -Wait
@@ -74,19 +74,8 @@ try {
 if (Test-Path -LiteralPath (Join-Path $installed 'Cryptomator.exe')) { throw 'Uninstall left the launcher behind.' }
 # Exercise the actual full-UI MSI, not just msiexec /qn.
 & "$PSScriptRoot/test-wizard.ps1" -Msi $msi -Arch $Arch -Version $Version
-if ($env:REFRESH_WIZARD -eq 'true') {
-  $previous = Join-Path $env:RUNNER_TEMP "previous-$Arch.msi"
-  $digest = if ($Arch -eq 'arm64') { 'aef611f39e23511b4e8a84b516d9231a8a150021eaaab675cd8bb7908fe98549' } else { '5924cf30873a07b11e2965353fb97ddd48aca1018cbddfc7f79c23ff2c447a4c' }
-  Invoke-WebRequest "https://github.com/travertexs/cryptomator/releases/download/windows-1.20.0-SNAPSHOT/Cryptomator-$Version-windows-$Arch.msi" -OutFile $previous
-  if ((Get-FileHash $previous).Hash -ine $digest) { throw 'Previous installer digest mismatch.' }
-  Invoke-Msi '/i' 'previous-install.log' $previous
-  Invoke-Msi '/i' 'wizard-upgrade.log'
-  try {
-    Assert-UpstreamRegistration
-    $menu = [Environment]::GetFolderPath('CommonPrograms')
-    if (!(Test-Path -LiteralPath (Join-Path $menu "Cryptomator ($Arch).lnk")) -or (Test-Path -LiteralPath (Join-Path $menu "Cryptomator (travertexs $Arch).lnk"))) { throw 'Shortcut migration failed.' }
-    Write-Host "Same-version upgrade replaced the old name and shortcut ($Arch)."
-  } finally { Invoke-Msi '/x' 'wizard-upgrade-uninstall.log' }
+if ($Arch -eq 'arm64') {
+  & "$PSScriptRoot/test-arm64-migration.ps1" -Msi $msi -Image $image -Version $Version -NumericVersion $NumericVersion
 }
 $zip = Join-Path $out.FullName "Cryptomator-$Version-windows-$Arch.zip"
 Compress-Archive -LiteralPath $image -DestinationPath $zip -CompressionLevel Optimal

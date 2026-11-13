@@ -67,6 +67,13 @@ if ([WizardWindow]::IsWindowEnabled($next)) { throw 'License agreement was not r
 [WizardWindow]::Click($accept)
 Click-Button '^Next$' 'accepted license'
 [void](Wait-Button '^Change' 'destination chooser')
+if ($Arch -eq 'arm64') {
+  $wanted=(Join-Path $env:ProgramFiles 'Cryptomator').TrimEnd('\')
+  $win=[WizardWindow]::Window($title)
+  $paths=@([WizardWindow]::Controls($win) | ForEach-Object { [WizardWindow]::Label($_).TrimEnd('\') } | Where-Object { $_ -ieq $wanted })
+  if (-not $paths.Count) { throw "Destination page does not show upstream default '$wanted'." }
+  Write-Host "Verified visible ARM64 destination: $wanted"
+}
 Click-Button '^Next$' 'destination'
 [void](Wait-Button 'Create a Start menu shortcut' 'shortcut choice')
 Click-Button '^Next$' 'shortcut choice'

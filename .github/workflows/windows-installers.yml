@@ -28,12 +28,15 @@ jobs:
     outputs:
       app: ${{ steps.read.outputs.app }}
       numeric: ${{ steps.read.outputs.numeric }}
+      matrix: ${{ steps.read.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Read exact application version from the checked-out upstream POM
         id: read
+        env:
+          LAYOUT_ONLY: ${{ contains(github.event.head_commit.message, '[arm64-layout-443788845]') }}
         shell: pwsh
         run: |
           $v = [string]([xml](Get-Content -LiteralPath pom.xml -Raw)).project.version
@@ -43,6 +46,9 @@ jobs:
           $numeric = $Matches.numeric
           $msi = [version]$numeric
           if ($msi.Major -gt 255 -or $msi.Minor -gt 255 -or $msi.Build -gt 65535) { throw 'Upstream version exceeds MSI limits.' }
+          $targets=@(@{arch='arm64';javaArch='aarch64';os='windows-11-arm'})
+          if ($env:LAYOUT_ONLY -ne 'true') { $targets+=@{arch='x64';javaArch='x64';os='windows-2025'} }
+          "matrix=$(@{include=$targets} | ConvertTo-Json -Compress -Depth 4)" >> $env:GITHUB_OUTPUT
           "app=$v" >> $env:GITHUB_OUTPUT
           "numeric=$numeric" >> $env:GITHUB_OUTPUT
           Write-Host "Upstream application version: $v; numeric Windows metadata: $numeric"
@@ -53,19 +59,12 @@ jobs:
     timeout-minutes: 110
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            javaArch: aarch64
-            os: windows-11-arm
-          - arch: x64
-            javaArch: x64
-            os: windows-2025
+      matrix: ${{ fromJSON(needs.version.outputs.matrix) }}
     env:
       APP_VERSION: ${{ needs.version.outputs.app }}
       PACKAGE_VERSION: ${{ needs.version.outputs.numeric }}
       TARGET_ARCH: ${{ matrix.arch }}
-      REFRESH_WIZARD: ${{ contains(github.event.head_commit.message, '[refresh-wizard-443788845]') }}
+      ARM64_LAYOUT_REFRESH: ${{ contains(github.event.head_commit.message, '[arm64-layout-443788845]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -498,14 +497,14 @@ jobs:
           pattern: windows-*
           path: packages
           merge-multiple: true
-      - name: Refresh only the two MSIs and their checksums on the verified existing release
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[refresh-wizard-443788845]')
+      - name: Refresh only the ARM64 MSI and checksum on the verified existing release
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[arm64-layout-443788845]')
         working-directory: packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash ../dist/win/downstream/refresh-wizard-assets.sh
       - name: Verify complete asset set and publish regular fork release
-        if: "!contains(github.event.head_commit.message, '[refresh-wizard-443788845]')"
+        if: "!contains(github.event.head_commit.message, '[arm64-layout-443788845]')"
         working-directory: packages
         shell: bash
         env:
@@ -528,6 +527,6 @@ jobs:
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
             echo 'Refusing to replace an existing release tag.' >&2; exit 1
           fi
-          notes="Regular, unofficial downstream Windows release built from the upstream development branch plus this fork's Windows Hello fixes. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. These unsigned MSIs install separately from upstream Cryptomator. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          notes="Regular, unofficial downstream Windows release built from the upstream development branch plus this fork's Windows Hello fixes. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. The unsigned ARM64 MSI uses upstream's default install directory and MSI family; it replaces compatible official MSI installations and the former fork ARM64 MSI. The fork x64 MSI remains separate. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Cryptomator $APP_VERSION for Windows (ARM64 and x64)" --notes "$notes" --draft
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest

@@ -12,5 +12,5 @@ function Get-Rows([string]$sql,[int]$count) {
 Get-Rows 'SELECT `Property`,`Value` FROM `Property`' 2 | Where-Object { $_ -match '^(UpgradeCode|ProductCode|ProductVersion|Manufacturer|ProductName) ' }
 Get-Rows 'SELECT `Registry`,`Root`,`Key`,`Name`,`Value` FROM `Registry`' 5
 Get-Rows 'SELECT `Directory`,`Directory_Parent`,`DefaultDir` FROM `Directory`' 3 | Where-Object { $_ -match '^INSTALLDIR ' }
-Get-Rows 'SELECT `ProgId`,`Description` FROM `ProgId`' 2
-Get-Rows 'SELECT `Extension`,`ProgId_` FROM `Extension`' 2
+# Upstream registers the non-advertised associations in Registry, not in
+# the optional advertised ProgId / Extension tables.
