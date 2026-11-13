@@ -3,10 +3,6 @@ name: Build and release native Windows installers
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Unused downstream release version (major.minor.patch)
-        required: true
-        default: '1.20.0'
       runtime_run_id:
         description: Successful same-fork ARM64 Java 27 runtime workflow run
         required: true
@@ -23,13 +19,35 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  APP_VERSION: ${{ inputs.version || '1.20.0' }}
-  PACKAGE_VERSION: ${{ inputs.version || '1.20.0' }}
   RUNTIME_RUN_ID: ${{ inputs.runtime_run_id || '43341806757' }}
 
 jobs:
-  build:
+  version:
     if: github.repository == 'travertexs/cryptomator' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[windows-release]'))
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.read.outputs.app }}
+      numeric: ${{ steps.read.outputs.numeric }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Read exact application version from the checked-out upstream POM
+        id: read
+        shell: pwsh
+        run: |
+          $v = [string]([xml](Get-Content -LiteralPath pom.xml -Raw)).project.version
+          if ($v -cnotmatch '^(?<numeric>[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,5})(?:[-+][0-9A-Za-z][0-9A-Za-z._+-]*)?$') {
+            throw "Unsupported upstream version '$v'; refusing to substitute or bump it."
+          }
+          $numeric = $Matches.numeric
+          $msi = [version]$numeric
+          if ($msi.Major -gt 255 -or $msi.Minor -gt 255 -or $msi.Build -gt 65535) { throw 'Upstream version exceeds MSI limits.' }
+          "app=$v" >> $env:GITHUB_OUTPUT
+          "numeric=$numeric" >> $env:GITHUB_OUTPUT
+          Write-Host "Upstream application version: $v; numeric Windows metadata: $numeric"
+  build:
+    needs: version
     name: Build, install and test Windows ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 110
@@ -44,18 +62,14 @@ jobs:
             javaArch: x64
             os: windows-2025
     env:
+      APP_VERSION: ${{ needs.version.outputs.app }}
+      PACKAGE_VERSION: ${{ needs.version.outputs.numeric }}
       TARGET_ARCH: ${{ matrix.arch }}
+      TEST_SUPERSEDED: ${{ contains(github.event.head_commit.message, '[replace-release-443708450]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Check target release version
-        shell: pwsh
-        run: |
-          if ($env:APP_VERSION -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,5}$') { throw 'Expected a numeric release version.' }
-          $v = [version]$env:APP_VERSION
-          if ($v.Major -gt 255 -or $v.Minor -gt 255 -or $v.Build -gt 65535) { throw 'Version exceeds Windows Installer limits.' }
-
       - name: Resolve Windows integration version
         id: integrations
         shell: pwsh
@@ -250,8 +264,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\mvnw.cmd -B versions:set "-DnewVersion=$env:APP_VERSION"
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to set the application version.' }
+          if (([xml](Get-Content pom.xml -Raw)).project.version -cne $env:APP_VERSION) { throw 'Application version must match the checked-out POM.' }
 
           # x64 uses upstream Maven platform detection. Windows ARM64 has no
           # Central classifier: select the Windows compile-only API jars directly
@@ -447,7 +460,7 @@ jobs:
 
       - name: Build MSI and test install, installed startup and uninstall
         shell: pwsh
-        run: ./dist/win/downstream/installer-test.ps1 -Arch $env:TARGET_ARCH -Version $env:APP_VERSION
+        run: ./dist/win/downstream/installer-test.ps1 -Arch $env:TARGET_ARCH -Version $env:APP_VERSION -NumericVersion $env:PACKAGE_VERSION
       - name: Include corresponding modified OpenJDK sources
         if: matrix.arch == 'arm64'
         shell: pwsh
@@ -462,7 +475,9 @@ jobs:
             release/*.sha256
           if-no-files-found: error
   publish:
-    needs: build
+    needs: [version, build]
+    env:
+      APP_VERSION: ${{ needs.version.outputs.app }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -499,3 +514,23 @@ jobs:
           notes="Regular, unofficial downstream Windows release built from the upstream development branch plus this fork's Windows Hello fixes. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. These unsigned MSIs install separately from upstream Cryptomator. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Cryptomator $APP_VERSION for Windows (ARM64 and x64)" --notes "$notes" --draft
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+      - name: Retire the specifically superseded Nov 13 release after verifying its replacement
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[replace-release-443708450]')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY"
+          [[ "$GITHUB_REPOSITORY" == travertexs/cryptomator && "$APP_VERSION" == 1.20.0-SNAPSHOT ]]
+          new="windows-$APP_VERSION"
+          old="windows-1.20.0"
+          [[ "$(gh api "$api/git/ref/tags/$new" --jq '.object.sha')" == "$GITHUB_SHA" ]]
+          gh api "$api/releases/tags/$new" | jq -e --arg tag "$new" --arg v "$APP_VERSION" '
+            .tag_name == $tag and .draft == false and .prerelease == false and
+            ([.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $n |
+            (["arm64","x64"] | all(.[]; . as $a | ($n | index("Cryptomator-"+$v+"-windows-"+$a+".msi")) != null)))' >/dev/null
+          [[ "$(gh api "$api/releases/tags/$old" --jq .id)" == 443708450 ]]
+          [[ "$(gh api "$api/git/ref/tags/$old" --jq '.object.sha')" == ae1fde1ea5df575d545be7a43fb809047b0cace2 ]]
+          gh api --method DELETE "$api/releases/443708450"
+          gh api --method DELETE "$api/git/refs/tags/$old"

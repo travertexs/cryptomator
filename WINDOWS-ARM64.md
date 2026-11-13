@@ -1,6 +1,6 @@
 # Windows builds for ARM64 and x64
 
-This fork publishes regular, unofficial Windows releases built from upstream's development branch. The downstream release number is not a claim of an official upstream stable release. Older preview downloads remain available.
+This fork publishes regular, unofficial Windows releases built from upstream's development branch. The application, installer display name, release title, tag and downloads keep the exact version from the revision's `pom.xml`, including `-SNAPSHOT` when present. Only numeric Windows package metadata uses its major.minor.patch part. A regular fork release is not an official stable upstream release. Older preview downloads remain available.
 
 ## Install
 
@@ -15,4 +15,4 @@ The Windows installers workflow builds on separate native ARM64 and x64 runners.
 
 The Windows Hello integration patch runs WinRT calls on an MTA worker, retains the MTA while its cached factories are in use, and validates credential-open results. Both architectures compile and test that integration. The ARM64 runtime workflow builds pinned OpenJDK 27.0.1.0.3 with the first-chance cryptography exception fix. The installer workflow checks the source workflow and patch against that successful build before consuming it. x64 uses a native Temurin JDK. Both retain upstream's certificate and font packaging steps. CI checks Hello availability and failure handling, not interactive biometric/PIN unlock on an enrolled device.
 
-The daily sync workflow merges upstream develop into this fork without opening an upstream PR. To rebuild a changed ARM64 runtime, dispatch the Windows ARM64 Java 27 runtime workflow on develop; then supply its successful run ID and an unused numeric release version to the Windows installers workflow. Published releases will not be overwritten.
+The daily sync workflow merges upstream develop into this fork without opening an upstream PR. To rebuild a changed ARM64 runtime, dispatch the Windows ARM64 Java 27 runtime workflow on develop, then supply its successful run ID to the Windows installers workflow. There is no version override. If the upstream version already has a tag, publication stops instead of inventing a version or overwriting a release.

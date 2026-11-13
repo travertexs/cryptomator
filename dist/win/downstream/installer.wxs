@@ -1,7 +1,8 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="Cryptomator (travertexs $(var.Arch))" Manufacturer="travertexs downstream"
+  <Package Name="Cryptomator $(var.AppVersion) (travertexs $(var.Arch))" Manufacturer="travertexs downstream"
            Version="$(var.Version)" UpgradeCode="$(var.UpgradeCode)" Language="1033" Scope="perMachine">
-    <MajorUpgrade DowngradeErrorMessage="A newer downstream version is already installed."/>
+    <!-- A snapshot and its corrected build can have the same numeric MSI version. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer downstream version is already installed."/>
     <MediaTemplate EmbedCab="yes"/>
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Cryptomator-travertexs-$(var.Arch)"/>
