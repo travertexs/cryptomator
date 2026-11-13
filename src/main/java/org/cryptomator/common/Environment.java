@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.Set;
@@ -22,20 +23,23 @@ public class Environment {
 
 	private static final Logger LOG = LoggerFactory.getLogger(Environment.class);
 	private static final int DEFAULT_MIN_PW_LENGTH = 8;
-	public static final String SETTINGS_PATH_PROP_NAME = "cryptomator.settingsPath";
-	public static final String IPC_SOCKET_PATH_PROP_NAME = "cryptomator.ipcSocketPath";
-	public static final String KEYCHAIN_PATHS_PROP_NAME = "cryptomator.integrationsWin.keychainPaths";
-	public static final String WINDOWS_HELLO_KEYCHAIN_PATHS_PROP_NAME = "cryptomator.integrationsWin.windowsHelloKeychainPaths";
-	public static final String P12_PATH_PROP_NAME = "cryptomator.p12Path";
-	public static final String LOG_DIR_PROP_NAME = "cryptomator.logDir";
-	public static final String LOOPBACK_ALIAS_PROP_NAME = "cryptomator.loopbackAlias";
-	public static final String MOUNTPOINT_DIR_PROP_NAME = "cryptomator.mountPointsDir";
-	public static final String MIN_PW_LENGTH_PROP_NAME = "cryptomator.minPwLength";
-	public static final String APP_VERSION_PROP_NAME = "cryptomator.appVersion";
-	public static final String BUILD_NUMBER_PROP_NAME = "cryptomator.buildNumber";
-	public static final String PLUGIN_DIR_PROP_NAME = "cryptomator.pluginDir";
-	public static final String TRAY_ICON_PROP_NAME = "cryptomator.showTrayIcon";
-	public static final String DISABLE_UPDATE_CHECK_PROP_NAME = "cryptomator.disableUpdateCheck";
+	private static final String SETTINGS_PATH_PROP_NAME = "cryptomator.settingsPath";
+	private static final String IPC_SOCKET_PATH_PROP_NAME = "cryptomator.ipcSocketPath";
+	private static final String KEYCHAIN_PATHS_PROP_NAME = "cryptomator.integrationsWin.keychainPaths";
+	private static final String WINDOWS_HELLO_KEYCHAIN_PATHS_PROP_NAME = "cryptomator.integrationsWin.windowsHelloKeychainPaths";
+	private static final String P12_PATH_PROP_NAME = "cryptomator.p12Path";
+	private static final String LOG_DIR_PROP_NAME = "cryptomator.logDir";
+	private static final String LOOPBACK_ALIAS_PROP_NAME = "cryptomator.loopbackAlias";
+	private static final String MOUNTPOINT_DIR_PROP_NAME = "cryptomator.mountPointsDir";
+	private static final String MIN_PW_LENGTH_PROP_NAME = "cryptomator.minPwLength";
+	private static final String APP_VERSION_PROP_NAME = "cryptomator.appVersion";
+	private static final String BUILD_NUMBER_PROP_NAME = "cryptomator.buildNumber";
+	private static final String PUBLISH_TIMESTAMP_PROP_NAME = "cryptomator.publishTimestamp";
+	private static final String PLUGIN_DIR_PROP_NAME = "cryptomator.pluginDir";
+	private static final String TRAY_ICON_PROP_NAME = "cryptomator.showTrayIcon";
+	private static final String DISABLE_UPDATE_CHECK_PROP_NAME = "cryptomator.disableUpdateCheck";
+	private static final String LICENSE_CHAIN_REQUIRED_CN_PROP_NAME = "cryptomator.licenseChainRequiredCn";
+	private static final String DEFAULT_LICENSE_CHAIN_REQUIRED_CN = "License Intermediate CA (Prod)";
 	public static final String HUB_ALLOWED_HOSTS_PROP_NAME = "cryptomator.hub.allowedHosts";
 	public static final String HUB_TOFU_PROP_NAME = "cryptomator.hub.enableTrustOnFirstUse";
 
@@ -61,6 +65,7 @@ public class Environment {
 		logCryptomatorSystemProperty(PLUGIN_DIR_PROP_NAME);
 		logCryptomatorSystemProperty(TRAY_ICON_PROP_NAME);
 		logCryptomatorSystemProperty(DISABLE_UPDATE_CHECK_PROP_NAME);
+		logCryptomatorSystemProperty(LICENSE_CHAIN_REQUIRED_CN_PROP_NAME);
 		logCryptomatorSystemProperty(HUB_ALLOWED_HOSTS_PROP_NAME);
 		logCryptomatorSystemProperty(HUB_TOFU_PROP_NAME);
 	}
@@ -131,6 +136,15 @@ public class Environment {
 	}
 
 	/**
+	 * Returns the time this app version was published, as defined in the {@value PUBLISH_TIMESTAMP_PROP_NAME} property in ISO-8601 format (e.g. {@code 2026-11-10T20:33:00Z}).
+	 *
+	 * @return Publish timestamp or empty, if undefined
+	 */
+	public Optional<Instant> getPublishTimestamp() {
+		return Optional.ofNullable(System.getProperty(PUBLISH_TIMESTAMP_PROP_NAME)).map(Instant::parse);
+	}
+
+	/**
 	 * Returns the app version concatenated with the build number (if defined).
 	 *
 	 * @return version string formatted like {@code 1.2.3-4567} or {@code 1.2.3} if no build number is defined.
@@ -149,6 +163,10 @@ public class Environment {
 
 	public boolean disableUpdateCheck() {
 		return Boolean.getBoolean(DISABLE_UPDATE_CHECK_PROP_NAME);
+	}
+
+	public String getLicenseChainRequiredCn() {
+		return System.getProperty(LICENSE_CHAIN_REQUIRED_CN_PROP_NAME, DEFAULT_LICENSE_CHAIN_REQUIRED_CN);
 	}
 
 	public Set<String> hubAllowedHosts() {

@@ -24,7 +24,7 @@ rm -rf runtime dmg *.app *.dmg
 # set variables
 APP_NAME="Cryptomator"
 VENDOR="Skymatic GmbH"
-COPYRIGHT_YEARS="2016 - 2026"
+COPYRIGHT_YEARS="2016 - $(date +%Y)"
 PACKAGE_IDENTIFIER="org.cryptomator"
 MAIN_JAR_GLOB="cryptomator-*.jar"
 MODULE_AND_MAIN_CLASS="org.cryptomator.desktop/org.cryptomator.launcher.Cryptomator"
@@ -32,15 +32,15 @@ REVISION_NO=`git rev-list --count HEAD`
 VERSION_NO=`../../../mvnw -f../../../pom.xml help:evaluate -Dexpression=project.version -q -DforceStdout | sed -rn 's/.*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p'`
 FUSE_LIB="FUSE-T"
 
-JAVAFX_VERSION=25.0.3
+JAVAFX_VERSION=25.0.5
 JAVAFX_ARCH="undefined"
 JAVAFX_JMODS_SHA256="undefined"
 if [ "$(machine)" = "arm64e" ]; then
     JAVAFX_ARCH="aarch64"
-    JAVAFX_JMODS_SHA256="a52014d625b8b04e57fd71650f881c1397542b4018e1b04f1b4e66c8800a1f34"
+    JAVAFX_JMODS_SHA256="2a05b5d236c10eb74a366638cf908ddebfa36795695c8b1f2734f2169d54b128"
 else
     JAVAFX_ARCH="x64"
-    JAVAFX_JMODS_SHA256="3512fabe43aee467538d329cfbbaab3c53dff2a810f0d54e381f461d5e0fac43"
+    JAVAFX_JMODS_SHA256="c50de3b8ed05385c452557bf0ac66682d73c597f224f056c091d825cb4224456"
 fi
 JAVAFX_JMODS_URL="https://download2.gluonhq.com/openjfx/${JAVAFX_VERSION}/openjfx-${JAVAFX_VERSION}_osx-${JAVAFX_ARCH}_bin-jmods.zip"
 
@@ -51,6 +51,13 @@ command -v create-dmg >/dev/null 2>&1 || { echo >&2 "create-dmg not found. Fix b
 if [ -n "${CODESIGN_IDENTITY}" ]; then
     command -v codesign >/dev/null 2>&1 || { echo >&2 "codesign not found. Fix by 'xcode-select --install'."; exit 1; }
     if [[ ! `security find-identity -v -p codesigning | grep -w "${CODESIGN_IDENTITY}"` ]]; then echo "Given codesign identity is invalid."; exit 1; fi
+fi
+if [ -n "${CODESIGN_IDENTITY}" ] && [ -n "${TEAM_IDENTIFIER}" ]; then
+    ../verify-provisioning-profile.sh ../embedded.provisionprofile "${TEAM_IDENTIFIER}.${PACKAGE_IDENTIFIER}" com.apple.developer.fskit.mount || exit 1
+fi
+if [ -n "${CODESIGN_IDENTITY}" ] && [ -n "${TEAM_IDENTIFIER}" ] && [ "${JAVAFX_ARCH}" = "aarch64" ]; then
+    [ -f ../fskit-extension.provisionprofile ] || { echo >&2 "FSKit extension provisioning profile not found at dist/mac/fskit-extension.provisionprofile."; exit 1; }
+    ../verify-provisioning-profile.sh ../fskit-extension.provisionprofile "${TEAM_IDENTIFIER}.${PACKAGE_IDENTIFIER}.fskit" com.apple.developer.fskit.fsmodule || exit 1
 fi
 
 # download and check jmods
@@ -91,6 +98,8 @@ ${JAVA_HOME}/bin/jlink \
     --no-man-pages \
     --strip-debug \
     --compress zip-0
+## remove distrusted CA certificates from runtime
+${JAVA_HOME}/bin/java ../../common/RemoveDistrustedCaCerts.java runtime/lib/security/cacerts
 
 # create app dir
 ${JAVA_HOME}/bin/jpackage \
@@ -106,12 +115,11 @@ ${JAVA_HOME}/bin/jpackage \
     --copyright "(C) ${COPYRIGHT_YEARS} ${VENDOR}" \
     --app-version "${VERSION_NO}" \
     --java-options "--enable-preview" \
-    --java-options "--enable-native-access=javafx.graphics,org.cryptomator.jfuse.mac" \
+    --java-options "--enable-native-access=javafx.graphics,org.cryptomator.frontend.fuse,org.cryptomator.jfuse.mac,org.cryptomator.frontend.fskit" \
     --java-options "-Xss5m" \
     --java-options "-Xmx256m" \
     --java-options "-Dfile.encoding=\"utf-8\"" \
     --java-options "-Djava.net.useSystemProxies=true" \
-    --java-options "-Dapple.awt.enableTemplateImages=true" \
     --java-options "-Dsun.java2d.metal=true" \
     --java-options "-Dcryptomator.appVersion=\"${VERSION_NO}\"" \
     --java-options "-Dcryptomator.adminConfigPath=\"/Library/Application Support/Cryptomator/config.properties\"" \
@@ -125,6 +133,7 @@ ${JAVA_HOME}/bin/jpackage \
     --java-options "-Dcryptomator.showTrayIcon=true" \
     --java-options "-Dcryptomator.updateMechanism=org.cryptomator.macos.update.DmgUpdateMechanism" \
     --java-options "-Dcryptomator.buildNumber=\"dmg-${REVISION_NO}\"" \
+    --java-options "-Dcryptomator.publishTimestamp=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" \
     --java-options "-Dcryptomator.hub.enableTrustOnFirstUse=true" \
     --mac-package-identifier ${PACKAGE_IDENTIFIER} \
     --resource-dir ../resources
@@ -137,33 +146,34 @@ sed -i '' "s|###BUNDLE_VERSION###|${REVISION_NO}|g" ${APP_NAME}.app/Contents/Inf
 cp ../embedded.provisionprofile ${APP_NAME}.app/Contents/
 
 # generate license
+sed -e 's|###FONT_NAME###|Helvetica|g' -e 's|###FONT_SIZE###|24|g' -e 's|###WITH_WINFSP###|false|g' -e "s|###COPYRIGHT_END_YEAR###|$(date +%Y)|g" \
+    ../../common/licenseTemplate.template.ftl > resources/licenseTemplate.ftl
 ../../../mvnw -B -f../../../pom.xml license:add-third-party \
     -Dlicense.thirdPartyFilename=license.rtf \
     -Dlicense.outputDirectory=dist/mac/dmg/resources \
     -Dlicense.fileTemplate=resources/licenseTemplate.ftl \
     -Dlicense.includedScopes=compile \
     -Dlicense.excludedGroups=^org\.cryptomator \
-    -Dlicense.failOnMissing=true \
-    -Dlicense.licenseMergesUrl=file://$(pwd)/../../../license/merges
+    -Dlicense.failOnMissing=true
 
 # codesign
 if [ -n "${CODESIGN_IDENTITY}" ] && [ -n "${TEAM_IDENTIFIER}" ]; then
     echo "Codesigning jdk files..."
-    find ${APP_NAME}.app/Contents/runtime/Contents/Home/lib/ -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
-    find ${APP_NAME}.app/Contents/runtime/Contents/Home/lib/ -name 'jspawnhelper' -exec codesign --force -o runtime -s ${CODESIGN_IDENTITY} {} \;
+    find ${APP_NAME}.app/Contents/runtime/Contents/Home/lib/ -name '*.dylib' -exec codesign --force -s "${CODESIGN_IDENTITY}" {} + || exit 1
+    find ${APP_NAME}.app/Contents/runtime/Contents/Home/lib/ -name 'jspawnhelper' -exec codesign --force -o runtime -s "${CODESIGN_IDENTITY}" {} + || exit 1
     echo "Codesigning jar contents..."
-    find ${APP_NAME}.app/Contents/runtime/Contents/MacOS -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
+    find ${APP_NAME}.app/Contents/runtime/Contents/MacOS -name '*.dylib' -exec codesign --force -s "${CODESIGN_IDENTITY}" {} + || exit 1
     for JAR_PATH in `find ${APP_NAME}.app -name "*.jar"`; do
     if [[ `unzip -l ${JAR_PATH} | grep '.dylib\|.jnilib'` ]]; then
         JAR_FILENAME=$(basename ${JAR_PATH})
         OUTPUT_PATH=${JAR_PATH%.*}
         echo "Codesigning libs in ${JAR_FILENAME}..."
-        unzip -q ${JAR_PATH} -d ${OUTPUT_PATH}
-        find ${OUTPUT_PATH} -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
-        find ${OUTPUT_PATH} -name '*.jnilib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
+        unzip -q ${JAR_PATH} -d ${OUTPUT_PATH} || exit 1
+        find ${OUTPUT_PATH} -name '*.dylib' -exec codesign --force -s "${CODESIGN_IDENTITY}" {} + || exit 1
+        find ${OUTPUT_PATH} -name '*.jnilib' -exec codesign --force -s "${CODESIGN_IDENTITY}" {} + || exit 1
         rm ${JAR_PATH}
         pushd ${OUTPUT_PATH} > /dev/null
-        zip -qr ../${JAR_FILENAME} *
+        zip -qr ../${JAR_FILENAME} * || exit 1
         popd > /dev/null
         rm -r ${OUTPUT_PATH}
     fi
@@ -172,7 +182,29 @@ if [ -n "${CODESIGN_IDENTITY}" ] && [ -n "${TEAM_IDENTIFIER}" ]; then
     cp ../${APP_NAME}.entitlements .
     sed -i '' "s|###APP_IDENTIFIER_PREFIX###|${TEAM_IDENTIFIER}.|g" ${APP_NAME}.entitlements
     sed -i '' "s|###TEAM_IDENTIFIER###|${TEAM_IDENTIFIER}|g" ${APP_NAME}.entitlements
-    codesign --force --deep --entitlements ${APP_NAME}.entitlements -o runtime -s ${CODESIGN_IDENTITY} ${APP_NAME}.app
+    codesign --force --deep --entitlements ${APP_NAME}.entitlements -o runtime -s "${CODESIGN_IDENTITY}" ${APP_NAME}.app || exit 1
+    if [ "${JAVAFX_ARCH}" = "aarch64" ]; then
+        echo "Embedding FSKit extension..."
+        APPEX_PATH=${APP_NAME}.app/Contents/Extensions/FSKitNioExtension.appex
+        ditto -x -k ../../../target/fskit-extension.zip ${APP_NAME}.app/Contents/Extensions || exit 1
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${PACKAGE_IDENTIFIER}.fskit" ${APPEX_PATH}/Contents/Info.plist || exit 1
+        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION_NO}" ${APPEX_PATH}/Contents/Info.plist || exit 1
+        /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${REVISION_NO}" ${APPEX_PATH}/Contents/Info.plist || exit 1
+        cp ../fskit-extension.provisionprofile ${APPEX_PATH}/Contents/embedded.provisionprofile || exit 1
+        echo "Codesigning FSKit extension..."
+        cp ../FSKitExtension.entitlements . || exit 1
+        sed -i '' "s|###APP_IDENTIFIER_PREFIX###|${TEAM_IDENTIFIER}.|g" FSKitExtension.entitlements || exit 1
+        sed -i '' "s|###TEAM_IDENTIFIER###|${TEAM_IDENTIFIER}|g" FSKitExtension.entitlements || exit 1
+        codesign --force --entitlements FSKitExtension.entitlements -o runtime -s "${CODESIGN_IDENTITY}" ${APPEX_PATH} || exit 1
+        echo "Codesigning ${APP_NAME}.app..."
+        codesign --force --entitlements ${APP_NAME}.entitlements -o runtime -s "${CODESIGN_IDENTITY}" ${APP_NAME}.app || exit 1
+        codesign --verify --deep --strict ${APP_NAME}.app || exit 1
+        codesign --verify --strict ${APPEX_PATH} || exit 1
+    else
+        echo "Leaving out the FSKit extension, which runs on Apple silicon only."
+    fi
+else
+    echo "Leaving out the FSKit extension, which cannot launch unsigned."
 fi
 
 # prepare dmg contents

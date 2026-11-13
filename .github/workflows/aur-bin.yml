@@ -9,6 +9,9 @@ on:
         description: 'Source or Release tag'
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   get-version:
     uses: ./.github/workflows/get-version.yml
@@ -21,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [get-version]
     container:
-      image: archlinux:base-devel
+      image: archlinux:base-devel@sha256:624bdc7fc6615155d67bc34cf7146c0c9fd0e3c92943977da63a630e4ca49c30
     env:
       SEMVER_STR: ${{ needs.get-version.outputs.semVerStr }}
       PKGDEST: ${{ github.workspace }}/pkgdest
@@ -33,10 +36,11 @@ jobs:
           pacman-key --populate archlinux
           pacman -Syu --noconfirm --needed git base-devel sudo gnupg maven unzip github-cli curl pacman-contrib
       - name: Checkout cryptomator/aur-bin
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: 'cryptomator/aur-bin'
           token: ${{ secrets.CRYPTOBOT_PR_TOKEN }}
+          persist-credentials: true # needed for git push below
       - name: Create build user
         run: |
           useradd -m builder

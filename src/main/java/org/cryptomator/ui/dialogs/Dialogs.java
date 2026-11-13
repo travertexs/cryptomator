@@ -71,6 +71,16 @@ public class Dialogs {
 				.setOkButtonKey(BUTTON_KEY_CLOSE);
 	}
 
+	public SimpleDialog.Builder prepareUnsupportedScryptParameters(Stage window, String titleKey, String... titleArgs) {
+		return createDialogBuilder().setOwner(window) //
+				.setTitleKey(titleKey, titleArgs) //
+				.setMessageKey("unlock.error.unsupportedScryptParameters.message") //
+				.setDescriptionKey("unlock.error.unsupportedScryptParameters.description") //
+				.setIcon(FontAwesome5Icon.EXCLAMATION) //
+				.setOkButtonKey(BUTTON_KEY_CLOSE) //
+				.setOkAction(Stage::close);
+	}
+
 	public SimpleDialog.Builder prepareRecoveryVaultAdded(Stage window, String displayName) {
 		return createDialogBuilder().setOwner(window) //
 				.setTitleKey("recover.existing.title") //
@@ -136,6 +146,19 @@ public class Dialogs {
 				.setIcon(FontAwesome5Icon.EXCLAMATION) //
 				.setOkButtonKey("retryIfReadonly.retry") //
 				.setCancelButtonKey(BUTTON_KEY_CLOSE) //
+				.setOkAction(okAction) //
+				.setCancelAction(Stage::close);
+	}
+
+	public SimpleDialog.Builder prepareFSKitExtensionSwitchedOffDialog(Stage window, Vault vault, Consumer<Stage> okAction) {
+		return createDialogBuilder() //
+				.setOwner(window) //
+				.setTitleKey("unlock.error.title", vault.getDisplayName()) //
+				.setMessageKey("unlock.error.extensionSwitchedOff.message") //
+				.setDescriptionKey("unlock.error.extensionSwitchedOff.description") //
+				.setIcon(FontAwesome5Icon.EXCLAMATION) //
+				.setOkButtonKey("unlock.error.extensionSwitchedOff.retryBtn") //
+				.setCancelButtonKey("generic.button.cancel") //
 				.setOkAction(okAction) //
 				.setCancelAction(Stage::close);
 	}

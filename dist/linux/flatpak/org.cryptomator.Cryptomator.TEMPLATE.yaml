@@ -1,7 +1,7 @@
 app-id: org.cryptomator.Cryptomator
 command: cryptomator
 runtime: org.freedesktop.Platform
-runtime-version: '25.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 separate-locales: false
 finish-args:
@@ -105,6 +105,7 @@ modules:
         --no-man-pages
         --strip-debug
         --compress=zip-0
+      - $JAVA_HOME/bin/java dist/common/RemoveDistrustedCaCerts.java runtime/lib/security/cacerts
       - $JAVA_HOME/bin/jpackage
         --type app-image
         --runtime-image runtime
@@ -114,8 +115,8 @@ modules:
         --dest .
         --name Cryptomator
         --vendor 'Skymatic GmbH'
-        --copyright '(C) 2016 - 2026 Skymatic GmbH'
-        --java-options '--enable-native-access=javafx.graphics,org.cryptomator.jfuse.linux.amd64,org.cryptomator.jfuse.linux.aarch64,org.purejava.appindicator'
+        --copyright '(C) 2016 - $COPYRIGHT_END_YEAR Skymatic GmbH'
+        --java-options '--enable-native-access=javafx.graphics,org.cryptomator.frontend.fuse,org.cryptomator.jfuse.linux.amd64,org.cryptomator.jfuse.linux.aarch64,org.purejava.appindicator'
         --java-options "--sun-misc-unsafe-memory-access=allow"
         --java-options '-Xss5m'
         --java-options '-Xmx256m'
@@ -123,6 +124,7 @@ modules:
         --java-options '-Djava.net.useSystemProxies=true'
         --java-options "-Dcryptomator.appVersion='${VERSION}'"
         --java-options "-Dcryptomator.buildNumber='flatpak-${REVISION_NO}'"
+        --java-options "-Dcryptomator.publishTimestamp='$PUBLISH_TIMESTAMP'"
         --java-options '-Dcryptomator.ipcSocketPath='@{userhome}/.config/Cryptomator/ipc.socket''
         --java-options '-Dcryptomator.adminConfigPath='/run/host/etc/cryptomator/config.properties''
         --java-options '-Dcryptomator.logDir='@{userhome}/.local/share/Cryptomator/logs''
@@ -150,26 +152,26 @@ modules:
         dest-filename: jdk.tar.gz
         only-arches:
           - x86_64
-        url: https://github.com/adoptium/temurin26-binaries/releases/download/jdk-26.0.1%2B8/OpenJDK26U-jdk_x64_linux_hotspot_26.0.1_8.tar.gz
-        sha512: eb46cda97ffd46e2e0c1f6f977dc204d9cc969b958946287b7e7d0bfe859fd92faccb2f6ef79995421a963c6de140c436af559403e0a2cd27c90b06c20260d5c
+        url: https://github.com/adoptium/temurin27-binaries/releases/download/jdk-27.0.1.0.2%2B1/OpenJDK27U-jdk_x64_linux_hotspot_27.0.1.0.2_1.tar.gz
+        sha512: 01092f1982745a34447811e20e5dcb4cb164d5509c09c985406038727dfb1639b372e8160e48570fd759cf931d0e0cba5b41d93df951e979c6b94d915e1ef6ef
       - type: file
         dest-filename: jdk.tar.gz
         only-arches:
           - aarch64
-        url: https://github.com/adoptium/temurin26-binaries/releases/download/jdk-26.0.1%2B8/OpenJDK26U-jdk_aarch64_linux_hotspot_26.0.1_8.tar.gz
-        sha512: 3c31671552712a8f0df96df2eeae7e9ad5156c0e98ebd5bf4fa04c14bba58bd5e19ff567ddcdc7aa478f6f4b0a852762a09bd88d3132acb121e667cfe0397034
+        url: https://github.com/adoptium/temurin27-binaries/releases/download/jdk-27.0.1.0.2%2B1/OpenJDK27U-jdk_aarch64_linux_hotspot_27.0.1.0.2_1.tar.gz
+        sha512: 374ba5e900992a8aad575171767eca503063906668ca88aca46ab25d82a588447b9075639e21efc9225f9d286750bd5ebcd000b98e5286d2a60bf437e37c8988
       - type: file
         dest-filename: openjfx.zip
         only-arches:
           - x86_64
-        url: https://download2.gluonhq.com/openjfx/25.0.3/openjfx-25.0.3_linux-x64_bin-jmods.zip
-        sha512: 75605440f13d0337e70ada1220f77d0d9780fb4602e676f1f07674d8b2e296b25080549d07edcca8f66733e15388860e3472d4ff6d51fd72b0452ed8bbe78022
+        url: https://download2.gluonhq.com/openjfx/25.0.5/openjfx-25.0.5_linux-x64_bin-jmods.zip
+        sha512: 2e344eca330db91a6e1b3e784c91d2855e6974eb80c69070418694852e93207d9fe0a3cd49a62703afbc3f26026b16d82e9812e70a1cbb6f23fde2a69494b7bd
       - type: file
         dest-filename: openjfx.zip
         only-arches:
           - aarch64
-        url: https://download2.gluonhq.com/openjfx/25.0.3/openjfx-25.0.3_linux-aarch64_bin-jmods.zip
-        sha512: 30c509b880ced1b29e0fafa41073d2350a16296d9439124b9a0e3bb391bf7f27e34d5abcfb338df11e5e898175699bceac40574bc9ad123ff071a5964f8fb14d
+        url: https://download2.gluonhq.com/openjfx/25.0.5/openjfx-25.0.5_linux-aarch64_bin-jmods.zip
+        sha512: 33ff6812f5e7acf3c38e223a5a19ecacfa1441f4926a6d5bd9172145e038ef7d24d1c1d2e6eec7344b93dc701e0b95bc5c3b02b8db284f3767ec7cb229e21844
       - type: file
         dest-filename: maven.tar.gz
         url: https://repo1.maven.org/maven2/org/apache/maven/apache-maven/3.9.13/apache-maven-3.9.13-bin.tar.gz

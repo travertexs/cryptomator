@@ -21,7 +21,11 @@ on:
       - '.github/workflows/linux-flatpak.yml'
       - 'dist/linux/flatpak/**'
       - 'dist/linux/common/**'
+      - 'dist/common/**'
       - 'dist/linux/resources/**'
+
+permissions:
+  contents: read
 
 jobs:
   get-version:
@@ -33,7 +37,7 @@ jobs:
     name: "Build flatpak"
     needs: [get-version]
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08@sha256:6ed6921bb5a9e1a916989971844f159b854b7b225880c381fa34f7a158863039
       options: --privileged
     strategy:
       fail-fast: false
@@ -49,17 +53,20 @@ jobs:
     env:
       SRC_GIT_SHA: ${{ inputs.src-tag || github.sha}}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: flathub/org.cryptomator.Cryptomator
           submodules: true
       - name: Checkout build script
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: build-scripts
       - name: Checkout app source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: cryptomator
           ref: ${{ env.SRC_GIT_SHA }}
           fetch-depth: 0
@@ -67,7 +74,9 @@ jobs:
         # using envsubst instead of yq to keep linebreaks
         run: |
           cp -r -f build-scripts/dist/linux/flatpak/* .
-          envsubst '$FLATPAK_VERSION $FLATPAK_REVISION $CRYPTOMATOR_SOURCE' < org.cryptomator.Cryptomator.TEMPLATE.yaml > org.cryptomator.Cryptomator.yaml
+          export COPYRIGHT_END_YEAR=$(date +%Y)
+          export PUBLISH_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          envsubst '$FLATPAK_VERSION $FLATPAK_REVISION $CRYPTOMATOR_SOURCE $COPYRIGHT_END_YEAR $PUBLISH_TIMESTAMP' < org.cryptomator.Cryptomator.TEMPLATE.yaml > org.cryptomator.Cryptomator.yaml
         env:
           FLATPAK_VERSION: ${{ needs.get-version.outputs.semVerNum }}
           FLATPAK_REVISION: 1
@@ -83,7 +92,7 @@ jobs:
           if-no-files-found: error
           path: |
             org.cryptomator.Cryptomator.${{matrix.variant.arch}}.yaml
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb # SNAPSHOT due to using keep-build-dirs
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # SNAPSHOT due to using keep-build-dirs
         with:
           bundle: cryptomator.flatpak
           manifest-path: org.cryptomator.Cryptomator.yaml
@@ -163,7 +172,7 @@ jobs:
     needs: [get-version, verify-maven-sources]
     if: (github.event_name == 'workflow_dispatch' && inputs.create-pr ) || (github.event_name == 'release' && needs.get-version.outputs.versionType == 'stable')
     permissions:
-      contents: write
+      contents: read # Required for checkout; the flathub push/PR uses CRYPTOBOT_PR_TOKEN
     env:
       TARBALL_URL: 'https://github.com/cryptomator/cryptomator/archive/refs/tags/${{ github.event.release.tag_name || inputs.src-tag }}.tar.gz'
     steps:
@@ -176,16 +185,20 @@ jobs:
           fi
         env:
           SRC_TAG: ${{ inputs.src-tag }}
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: flathub/org.cryptomator.Cryptomator
           submodules: true #TODO: Update submodule!
           token: ${{ secrets.CRYPTOBOT_PR_TOKEN }}
+          persist-credentials: true # needed for git push below
       - name: Checkout release branch
         run: |
-          git checkout -b release/${{ needs.get-version.outputs.semVerStr }}
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+          git checkout -b "release/${SEMVER_STR}"
+        env:
+          SEMVER_STR: ${{ needs.get-version.outputs.semVerStr }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: cryptomator
       - name: Download source tarball and compute checksum
         id: sha512
@@ -223,7 +236,9 @@ jobs:
           cp -r -f cryptomator/dist/linux/flatpak/* .
           cp -r -f mvn-src-x64/* .
           cp -r -f mvn-src-aarch64/* .
-          envsubst '$FLATPAK_VERSION $FLATPAK_REVISION $CRYPTOMATOR_SOURCE' < org.cryptomator.Cryptomator.TEMPLATE.yaml > org.cryptomator.Cryptomator.yaml
+          export COPYRIGHT_END_YEAR=$(date +%Y)
+          export PUBLISH_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          envsubst '$FLATPAK_VERSION $FLATPAK_REVISION $CRYPTOMATOR_SOURCE $COPYRIGHT_END_YEAR $PUBLISH_TIMESTAMP' < org.cryptomator.Cryptomator.TEMPLATE.yaml > org.cryptomator.Cryptomator.yaml
           yq -i 'del(.modules[] | select(.name == "cryptomator") | .build-options.build-args)' org.cryptomator.Cryptomator.yaml
           yq -i '(.modules[] | select(.name == "cryptomator") | .sources) += ["maven-dependencies.yaml", "javafx-maven-dependencies-x86_64.yaml", "javafx-maven-dependencies-aarch64.yaml"]' org.cryptomator.Cryptomator.yaml
         env:
@@ -239,16 +254,19 @@ jobs:
           git config user.email "cryptobot@users.noreply.github.com"
           git config push.autoSetupRemote true
           git stage org.cryptomator.Cryptomator.yaml maven-dependencies.yaml javafx-maven-dependencies-aarch64.yaml javafx-maven-dependencies-x86_64.yaml
-          git commit -m "Prepare release ${{needs.get-version.outputs.semVerStr}}"
+          git commit -m "Prepare release ${SEMVER_STR}"
           git push
+        env:
+          SEMVER_STR: ${{ needs.get-version.outputs.semVerStr }}
       - name: Create pull request
         id: create-pr
         run: |
           printf "Created by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > pr_body.md
-          PR_URL=$(gh pr create --title "Release ${{ needs.get-version.outputs.semVerStr }}" --body-file pr_body.md)
+          PR_URL=$(gh pr create --title "Release ${SEMVER_STR}" --body-file pr_body.md)
           echo "FLATHUB_PR_URL=$PR_URL" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.CRYPTOBOT_PR_TOKEN }}
+          SEMVER_STR: ${{ needs.get-version.outputs.semVerStr }}
       - name: Slack Notification
         uses: rtCamp/action-slack-notify@33ca3be66c6f378fe1610fd1d5258632dbed5e58 # v2.4.0
         if: github.event_name == 'release'

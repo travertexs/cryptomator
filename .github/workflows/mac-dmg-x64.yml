@@ -36,6 +36,35 @@ on:
       sha256-dmg:
         description: "SHA256 sum of the x64 dmg"
         value: ${{ jobs.build.outputs.sha256sum}}
+    secrets:
+      # What this workflow reads when called. Direct runs read the repository secrets of the same names.
+      MACOS_TEAM_IDENTIFIER:
+        required: false
+      MACOS_PROVISIONING_PROFILE_BASE64:
+        required: false
+      MACOS_FSKIT_PROVISIONING_PROFILE_BASE64:
+        required: false
+      MACOS_CODESIGN_P12_BASE64:
+        required: false
+      MACOS_CODESIGN_P12_PW:
+        required: false
+      MACOS_CODESIGN_TMP_KEYCHAIN_PW:
+        required: false
+      MACOS_CODESIGN_IDENTITY:
+        required: false
+      MACOS_NOTARIZATION_APPLE_ID:
+        required: false
+      MACOS_NOTARIZATION_PW:
+        required: false
+      MACOS_NOTARIZATION_TEAM_ID:
+        required: false
+      RELEASES_GPG_PRIVATE_KEY:
+        required: false
+      RELEASES_GPG_PASSPHRASE:
+        required: false
+      CRYPTOBOT_RELEASE_TOKEN:
+        required: false
+
   workflow_dispatch:
     inputs:
       semVerNum:
@@ -55,12 +84,15 @@ on:
         type: boolean
 
 env:
-  JAVA_DIST: 'temurin'
-  JAVA_VERSION: '26.0.1+8'
+  JAVA_DIST: 'zulu' # Temurin provides no macOS x64 builds for JDK 27
+  JAVA_VERSION: '27.0.1'
   VERSION_NUM: ${{ inputs.semVerNum || '99.99.99'}}
   REVISION_NUM: ${{ inputs.revisionNum || '0' }}
   VERSION_SUFFIX: ${{ inputs.semVerSuffix || ''}}
 
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -76,12 +108,29 @@ jobs:
           architecture: x64
           output-suffix: x64
           fuse-lib: macFUSE
-          openjfx-url: 'https://download2.gluonhq.com/openjfx/25.0.3/openjfx-25.0.3_osx-x64_bin-jmods.zip'
-          openjfx-sha: '3512fabe43aee467538d329cfbbaab3c53dff2a810f0d54e381f461d5e0fac43'
+          openjfx-url: 'https://download2.gluonhq.com/openjfx/25.0.5/openjfx-25.0.5_osx-x64_bin-jmods.zip'
+          openjfx-sha: 'c50de3b8ed05385c452557bf0ac66682d73c597f224f056c091d825cb4224456'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify provisioning profile
+        run: |
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode --output $RUNNER_TEMP/app.provisionprofile
+          dist/mac/verify-provisioning-profile.sh $RUNNER_TEMP/app.provisionprofile "${TEAM_IDENTIFIER}.org.cryptomator" com.apple.developer.fskit.mount
+        env:
+          TEAM_IDENTIFIER: ${{ secrets.MACOS_TEAM_IDENTIFIER }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
+      - name: Verify FSKit provisioning profile
+        if: matrix.architecture == 'aarch64'
+        run: |
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode --output $RUNNER_TEMP/fskit.provisionprofile
+          dist/mac/verify-provisioning-profile.sh $RUNNER_TEMP/fskit.provisionprofile "${TEAM_IDENTIFIER}.org.cryptomator.fskit" com.apple.developer.fskit.fsmodule
+        env:
+          TEAM_IDENTIFIER: ${{ secrets.MACOS_TEAM_IDENTIFIER }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_FSKIT_PROVISIONING_PROFILE_BASE64 }}
       - name: Setup Java
-        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: ${{ env.JAVA_DIST }}
           java-version: ${{ env.JAVA_VERSION }}
@@ -130,13 +179,17 @@ jobs:
           ${JAVA_HOME}/bin/jlink
           --verbose
           --output runtime
-          --module-path "${{ steps.jep-493-check.outputs.jmod_paths }}"
+          --module-path "${JMOD_PATHS}"
           --add-modules java.base,java.desktop,java.instrument,java.logging,java.naming,java.net.http,java.scripting,java.sql,java.xml,javafx.base,javafx.graphics,javafx.controls,javafx.fxml,jdk.crypto.cryptoki,jdk.crypto.ec,jdk.unsupported,jdk.accessibility,jdk.management.jfr,java.compiler
           --strip-native-commands
           --no-header-files
           --no-man-pages
           --strip-debug
           --compress zip-0
+        env:
+          JMOD_PATHS: ${{ steps.jep-493-check.outputs.jmod_paths }}
+      - name: Remove distrusted CA certificates from runtime
+        run: ${JAVA_HOME}/bin/java dist/common/RemoveDistrustedCaCerts.java runtime/lib/security/cacerts
       - name: Run jpackage
         run: >
           ${JAVA_HOME}/bin/jpackage
@@ -149,15 +202,15 @@ jobs:
           --dest appdir
           --name Cryptomator
           --vendor "Skymatic GmbH"
-          --copyright "(C) 2016 - 2026 Skymatic GmbH"
+          --copyright "(C) 2016 - $(date +%Y) Skymatic GmbH"
           --app-version "${VERSION_NUM}"
           --java-options "--enable-preview"
           --java-options "--enable-native-access=javafx.graphics,org.cryptomator.jfuse.mac"
+          --java-options "--enable-native-access=javafx.graphics,org.cryptomator.frontend.fuse,org.cryptomator.jfuse.mac,org.cryptomator.frontend.fskit"
           --java-options "-Xss5m"
           --java-options "-Xmx256m"
           --java-options "-Dfile.encoding=\"utf-8\""
           --java-options "-Djava.net.useSystemProxies=true"
-          --java-options "-Dapple.awt.enableTemplateImages=true"
           --java-options "-Dsun.java2d.metal=true"
           --java-options "-Dcryptomator.appVersion=\"${VERSION_NUM}${VERSION_SUFFIX}\""
           --java-options "-Dcryptomator.adminConfigPath=\"/Library/Application Support/Cryptomator/config.properties\""
@@ -170,6 +223,7 @@ jobs:
           --java-options "-Dcryptomator.showTrayIcon=true"
           --java-options "-Dcryptomator.updateMechanism=org.cryptomator.macos.update.DmgUpdateMechanism"
           --java-options "-Dcryptomator.buildNumber=\"dmg-${REVISION_NUM}\""
+          --java-options "-Dcryptomator.publishTimestamp=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
           --java-options "-Dcryptomator.hub.enableTrustOnFirstUse=true"
           --mac-package-identifier org.cryptomator
           --resource-dir dist/mac/resources
@@ -180,9 +234,11 @@ jobs:
           cp dist/mac/resources/Assets.car Cryptomator.app/Contents/Resources/
           sed -i '' "s|###BUNDLE_SHORT_VERSION_STRING###|${VERSION_NUM}|g" Cryptomator.app/Contents/Info.plist
           sed -i '' "s|###BUNDLE_VERSION###|${REVISION_NUM}|g" Cryptomator.app/Contents/Info.plist
-          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode --output Cryptomator.app/Contents/embedded.provisionprofile
-        env:
-          PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
+          cp $RUNNER_TEMP/app.provisionprofile Cryptomator.app/Contents/embedded.provisionprofile
+      - name: Create license template for dmg
+        run: >
+          sed -e 's|###FONT_NAME###|Helvetica|g' -e 's|###FONT_SIZE###|24|g' -e 's|###WITH_WINFSP###|false|g' -e "s|###COPYRIGHT_END_YEAR###|$(date +%Y)|g"
+          dist/common/licenseTemplate.template.ftl > dist/mac/dmg/resources/licenseTemplate.ftl
       - name: Generate license for dmg
         run: >
           ./mvnw -B license:add-third-party
@@ -192,14 +248,13 @@ jobs:
           -Dlicense.includedScopes=compile
           -Dlicense.excludedGroups=^org\.cryptomator
           -Dlicense.failOnMissing=true
-          -Dlicense.licenseMergesUrl=file://${{ github.workspace }}/license/merges
       - name: Install codesign certificate
         run: |
           # create variables
           CERTIFICATE_PATH=$RUNNER_TEMP/codesign.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/codesign.keychain-db
 
-          # import certificate and provisioning profile from secrets
+          # decode certificate from secrets
           echo -n "$CODESIGN_P12_BASE64" | base64 --decode --output $CERTIFICATE_PATH
 
           # create temporary keychain
@@ -217,18 +272,18 @@ jobs:
       - name: Codesign
         run: |
           echo "Codesigning jdk files..."
-          find Cryptomator.app/Contents/runtime/Contents/Home/lib/ -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
-          find Cryptomator.app/Contents/runtime/Contents/Home/lib/ \( -name 'jspawnhelper' -o -name 'pauseengine' -o -name 'simengine' \) -exec codesign --force -o runtime -s ${CODESIGN_IDENTITY} {} \;
+          find Cryptomator.app/Contents/runtime/Contents/Home/lib/ -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} +
+          find Cryptomator.app/Contents/runtime/Contents/Home/lib/ \( -name 'jspawnhelper' -o -name 'pauseengine' -o -name 'simengine' \) -exec codesign --force -o runtime -s ${CODESIGN_IDENTITY} {} +
           echo "Codesigning jar contents..."
-          find Cryptomator.app/Contents/runtime/Contents/MacOS -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
+          find Cryptomator.app/Contents/runtime/Contents/MacOS -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} +
           for JAR_PATH in `find Cryptomator.app -name "*.jar"`; do
             if [[ `unzip -l ${JAR_PATH} | grep '.dylib\|.jnilib'` ]]; then
               JAR_FILENAME=$(basename ${JAR_PATH})
               OUTPUT_PATH=${JAR_PATH%.*}
               echo "Codesigning libs in ${JAR_FILENAME}..."
               unzip -q ${JAR_PATH} -d ${OUTPUT_PATH}
-              find ${OUTPUT_PATH} -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
-              find ${OUTPUT_PATH} -name '*.jnilib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} \;
+              find ${OUTPUT_PATH} -name '*.dylib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} +
+              find ${OUTPUT_PATH} -name '*.jnilib' -exec codesign --force -s ${CODESIGN_IDENTITY} {} +
               rm ${JAR_PATH}
               pushd ${OUTPUT_PATH} > /dev/null
               zip -qr ../${JAR_FILENAME} *
@@ -240,6 +295,28 @@ jobs:
           sed -i '' "s|###APP_IDENTIFIER_PREFIX###|${TEAM_IDENTIFIER}.|g" dist/mac/Cryptomator.entitlements
           sed -i '' "s|###TEAM_IDENTIFIER###|${TEAM_IDENTIFIER}|g" dist/mac/Cryptomator.entitlements
           codesign --force --deep --entitlements dist/mac/Cryptomator.entitlements -o runtime -s ${CODESIGN_IDENTITY} Cryptomator.app
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          TEAM_IDENTIFIER: ${{ secrets.MACOS_TEAM_IDENTIFIER }}
+      - name: Embed and codesign FSKit extension
+        if: matrix.architecture == 'aarch64'
+        run: |
+          set -euo pipefail
+          APPEX_PATH=Cryptomator.app/Contents/Extensions/FSKitNioExtension.appex
+          echo "Embedding FSKit extension..."
+          ditto -x -k target/fskit-extension.zip Cryptomator.app/Contents/Extensions
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier org.cryptomator.fskit" ${APPEX_PATH}/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION_NUM}" ${APPEX_PATH}/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${REVISION_NUM}" ${APPEX_PATH}/Contents/Info.plist
+          cp $RUNNER_TEMP/fskit.provisionprofile ${APPEX_PATH}/Contents/embedded.provisionprofile
+          echo "Codesigning FSKit extension..."
+          sed -i '' "s|###APP_IDENTIFIER_PREFIX###|${TEAM_IDENTIFIER}.|g" dist/mac/FSKitExtension.entitlements
+          sed -i '' "s|###TEAM_IDENTIFIER###|${TEAM_IDENTIFIER}|g" dist/mac/FSKitExtension.entitlements
+          codesign --force --entitlements dist/mac/FSKitExtension.entitlements -o runtime -s ${CODESIGN_IDENTITY} ${APPEX_PATH}
+          echo "Codesigning Cryptomator.app..."
+          codesign --force --entitlements dist/mac/Cryptomator.entitlements -o runtime -s ${CODESIGN_IDENTITY} Cryptomator.app
+          codesign --verify --deep --strict Cryptomator.app
+          codesign --verify --strict ${APPEX_PATH}
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           TEAM_IDENTIFIER: ${{ secrets.MACOS_TEAM_IDENTIFIER }}
@@ -312,7 +389,7 @@ jobs:
           if-no-files-found: error
       - name: Publish dmg on GitHub Releases
         if: inputs.upload-to-draft
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: true
           fail_on_unmatched_files: true

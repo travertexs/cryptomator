@@ -23,12 +23,12 @@ if [[ ! "${CPU_ARCH}" =~ x86_64|aarch64 ]]; then echo "Platform ${CPU_ARCH} not 
 cp ../../../LICENSE.txt ../../../target
 cp ../../../target/cryptomator-*.jar ../../../target/mods
 
-JAVAFX_VERSION=25.0.3
+JAVAFX_VERSION=25.0.5
 JAVAFX_ARCH="x64"
-JAVAFX_JMODS_SHA256='47035c653863a8e4be3dc6f142b8dbd84b4bb1efc9a8cbc68413e6a5ff5e9f50'
+JAVAFX_JMODS_SHA256='fbb768a16c23a453c420ba55bbc2a689c708bc6456ef77c1e4f69823b95f9e9f'
 if [ "${CPU_ARCH}" = "aarch64" ]; then
     JAVAFX_ARCH="aarch64"
-    JAVAFX_JMODS_SHA256='e3fd682354346845d2944a2da2b1ff2b6cb9259d92027f2f9c121b9b93c5e42f'
+    JAVAFX_JMODS_SHA256='c85722f3f26059e1bbe689bb8ada4434dfaf68fa9fc8e64bac6a95da1828de01'
 fi
 
 # download javaFX jmods
@@ -68,6 +68,8 @@ ${JAVA_HOME}/bin/jlink \
     --no-man-pages \
     --strip-debug \
     --compress zip-0
+## remove distrusted CA certificates from runtime
+${JAVA_HOME}/bin/java ../../common/RemoveDistrustedCaCerts.java runtime/lib/security/cacerts
 
 # create app dir
 ${JAVA_HOME}/bin/jpackage \
@@ -81,8 +83,8 @@ ${JAVA_HOME}/bin/jpackage \
     --name Cryptomator \
     --vendor "Skymatic GmbH" \
     --java-options "--enable-preview" \
-    --java-options "--enable-native-access=javafx.graphics,org.cryptomator.jfuse.linux.amd64,org.cryptomator.jfuse.linux.aarch64,org.purejava.appindicator" \
-    --copyright "(C) 2016 - 2026 Skymatic GmbH" \
+    --java-options "--enable-native-access=javafx.graphics,org.cryptomator.frontend.fuse,org.cryptomator.jfuse.linux.amd64,org.cryptomator.jfuse.linux.aarch64,org.purejava.appindicator" \
+    --copyright "(C) 2016 - $(date +%Y) Skymatic GmbH" \
     --java-options "-Xss5m" \
     --java-options "-Xmx256m" \
     --app-version "${VERSION}.${REVISION_NO}" \
@@ -97,6 +99,7 @@ ${JAVA_HOME}/bin/jpackage \
     --java-options "-Dcryptomator.showTrayIcon=true" \
     --java-options "-Dcryptomator.integrationsLinux.trayIconsDir=\"@{appdir}/usr/share/icons/hicolor/symbolic/apps\"" \
     --java-options "-Dcryptomator.buildNumber=\"appimage-${REVISION_NO}\"" \
+    --java-options "-Dcryptomator.publishTimestamp=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" \
     --java-options "-Dcryptomator.networking.truststore.p12Path=\"/etc/cryptomator/certs.p12\"" \
     --java-options "-XX:ErrorFile=/cryptomator/cryptomator_crash.log" \
     --java-options "-Dcryptomator.hub.enableTrustOnFirstUse=true" \

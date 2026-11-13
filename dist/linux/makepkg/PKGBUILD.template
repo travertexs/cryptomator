@@ -14,8 +14,8 @@ license=('GPL3')
 depends=('fuse3' 'alsa-lib' 'hicolor-icon-theme' 'libxtst' 'libnet' 'libxrender')
 makedepends=('maven' 'unzip')
 optdepends=('keepassxc-cryptomator: Use KeePassXC to store vault passwords' 'ttf-hanazono: Install this font when using Japanese system language')
-_jdkver=26.0.1+8
-_jfxver=25.0.3
+_jdkver=27.0.1.0.2+1
+_jfxver=25.0.5
 _src_app_dir=cryptomator-${pkgver//_/-}
 source=($SOURCES);
 source_x86_64=("jdk-${_jdkver}.tar.gz::https://github.com/adoptium/temurin${_jdkver:0:2}-binaries/releases/download/jdk-${_jdkver//\+/%2B}/OpenJDK${_jdkver:0:2}U-jdk_x64_linux_hotspot_${_jdkver//\+/_}.tar.gz"
@@ -24,10 +24,10 @@ source_aarch64=("jdk-${_jdkver}.tar.gz::https://github.com/adoptium/temurin${_jd
                 "openjfx-${_jfxver}.zip::https://download2.gluonhq.com/openjfx/${_jfxver}/openjfx-${_jfxver}_linux-aarch64_bin-jmods.zip")
 noextract=("jdk-${_jdkver}.tar.gz" "openjfx-${_jfxver}.zip")
 sha256sums=($SOURCES_SHA)
-sha256sums_x86_64=('8e512f13e575a43655fc92319436c94890c137b9035cc6bd6f9cf24239704d3a'
-                   '47035c653863a8e4be3dc6f142b8dbd84b4bb1efc9a8cbc68413e6a5ff5e9f50')
-sha256sums_aarch64=('613f9b2861dea937b24d5eca745ef8567733b377d0bb612195acaad0e3f61360'
-                    'e3fd682354346845d2944a2da2b1ff2b6cb9259d92027f2f9c121b9b93c5e42f')
+sha256sums_x86_64=('30cb129f6cf299c852cec0feca9ea2a596d2ee9f26d8605d3a253951f6c8b20f'
+                   'fbb768a16c23a453c420ba55bbc2a689c708bc6456ef77c1e4f69823b95f9e9f')
+sha256sums_aarch64=('5ddacf925244a00b60cac828b61ff2f67a68cd32b8dfe5cee1405e333b4589e5'
+                    'c85722f3f26059e1bbe689bb8ada4434dfaf68fa9fc8e64bac6a95da1828de01')
 options=('!strip')
 
 validpgpkeys=('58117AFA1F85B3EEC154677D615D449FE6E6A235')
@@ -64,6 +64,8 @@ build() {
     --strip-debug \
     --compress=zip-0
 
+  "$JAVA_HOME/bin/java" ../dist/common/RemoveDistrustedCaCerts.java runtime/lib/security/cacerts
+
   ##Note: jpackage does not allow -beta suffixes, have to strip those
   "$JAVA_HOME/bin/jpackage" \
     --type app-image \
@@ -74,9 +76,9 @@ build() {
     --dest . \
     --name cryptomator \
     --vendor "Skymatic GmbH" \
-    --copyright "(C) 2016 - 2026 Skymatic GmbH" \
+    --copyright "(C) 2016 - $COPYRIGHT_END_YEAR Skymatic GmbH" \
     --java-options "--enable-preview" \
-    --java-options '--enable-native-access=javafx.graphics,org.cryptomator.jfuse.linux.amd64,org.cryptomator.jfuse.linux.aarch64,org.purejava.appindicator' \
+    --java-options '--enable-native-access=javafx.graphics,org.cryptomator.frontend.fuse,org.cryptomator.jfuse.linux.amd64,org.cryptomator.jfuse.linux.aarch64,org.purejava.appindicator' \
     --java-options "-Xss5m" \
     --java-options "-Xmx256m" \
     --java-options "-Dfile.encoding=\"utf-8\"" \
@@ -84,6 +86,7 @@ build() {
     --java-options "-Dcryptomator.adminConfigPath=\"/etc/cryptomator/config.properties\"" \
     --java-options "-Dcryptomator.appVersion=\"${pkgver//_/-}\"" \
     --java-options "-Dcryptomator.buildNumber=\"aur-${pkgrel}\"" \
+    --java-options "-Dcryptomator.publishTimestamp=\"$PUBLISH_TIMESTAMP\"" \
     --java-options "-Dcryptomator.disableUpdateCheck=true" \
     --java-options "-Dcryptomator.integrationsLinux.autoStartCmd=\"cryptomator\"" \
     --java-options "-Dcryptomator.ipcSocketPath=\"@{userhome}/.config/Cryptomator/ipc.socket\"" \
