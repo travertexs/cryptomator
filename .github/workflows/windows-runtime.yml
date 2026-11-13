@@ -1,0 +1,107 @@
+name: Build Windows ARM64 Java 27 runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/windows-runtime.yml'
+      - 'dist/win/arm64/hotspot-hello-exceptions.patch'
+
+permissions:
+  contents: read
+
+jobs:
+  build-runtime:
+    name: Build patched ARM64 OpenJDK runtime
+    if: github.repository == 'travertexs/cryptomator' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[windows-runtime]'))
+    runs-on: windows-2022
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      MSYS2_PATH_TYPE: minimal
+      CHERE_INVOKING: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out pinned OpenJDK source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openjdk/jdk27u
+          ref: 53eadcb2b7896ba55b86bcf5378cb3fab612063c # jdk-27.0.1.0.3-ga
+          path: .arm64/jdk-source
+      - name: Set up boot JDK
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '26'
+          architecture: x64
+      - name: Set up OpenJDK build shell
+        uses: ./.arm64/jdk-source/.github/actions/get-msys2
+        with:
+          architecture: x86.x64
+      - name: Apply ARM64 first-chance exception fix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('hotspot-hello-exceptions.patch')) {
+            $patch = Join-Path $env:GITHUB_WORKSPACE "dist/win/arm64/$name"
+            # OpenJDK disables line-ending conversion; this repository does not.
+            [IO.File]::WriteAllText($patch, [IO.File]::ReadAllText($patch).Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
+            git -C .arm64/jdk-source apply --check $patch
+            if ($LASTEXITCODE -ne 0) { throw "OpenJDK patch no longer applies: $name" }
+            git -C .arm64/jdk-source apply $patch
+            if ($LASTEXITCODE -ne 0) { throw "Unable to patch OpenJDK: $name" }
+          }
+      - name: Configure patched OpenJDK
+        working-directory: .arm64/jdk-source
+        shell: msys2 {0}
+        run: |
+          bash configure \
+            --with-conf-name=windows-aarch64-hello \
+            --openjdk-target=aarch64-unknown-cygwin \
+            --with-boot-jdk="$(cygpath -u "$JAVA_HOME")" \
+            --with-toolchain-version=2022 \
+            --with-msvc-toolset-version=14.44 \
+            --with-debug-level=release \
+            --with-version-opt=cryptomator-windows-arm64 \
+            --with-jmod-compress=zip-1 \
+            --with-native-debug-symbols=none \
+            --with-vendor-name=Cryptomator-ARM64-Downstream \
+            --with-vendor-url=https://github.com/travertexs/cryptomator \
+            --with-vendor-bug-url=https://github.com/travertexs/cryptomator/issues
+      - name: Compile complete ARM64 JDK image
+        working-directory: .arm64/jdk-source
+        shell: msys2 {0}
+        run: make CONF=windows-aarch64-hello images
+      - name: Package runtime and corresponding patched source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory .arm64/runtime-build -Force | Out-Null
+          Compress-Archive -Path .arm64/jdk-source/build/windows-aarch64-hello/images/jdk/* -DestinationPath .arm64/runtime-build/openjdk-arm64.zip
+          git -C .arm64/jdk-source add src/hotspot/os/windows/os_windows.cpp
+          $tree = (git -C .arm64/jdk-source write-tree).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to record patched OpenJDK source.' }
+          $sourceZip = Join-Path $env:GITHUB_WORKSPACE '.arm64/runtime-build/OpenJDK-27.0.1.0.3-windows-arm64-source.zip'
+          git -C .arm64/jdk-source archive --format=zip --prefix=openjdk-27.0.1.0.3-windows-arm64/ --output=$sourceZip $tree
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to archive corresponding OpenJDK source.' }
+      - name: Upload patched runtime and source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: patched-openjdk-arm64
+          path: .arm64/runtime-build/*.zip
+          if-no-files-found: error
+
+      - name: Preserve runtime build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openjdk-build-diagnostics
+          include-hidden-files: true
+          path: |
+            .arm64/jdk-source/build/*/configure.log
+            .arm64/jdk-source/build/*/config.log
+            .arm64/jdk-source/build/*/make-support/failure-summary
+            .arm64/jdk-source/config.log
+          if-no-files-found: ignore
