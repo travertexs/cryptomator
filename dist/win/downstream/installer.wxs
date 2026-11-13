@@ -1,0 +1,22 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Cryptomator (travertexs $(var.Arch))" Manufacturer="travertexs downstream"
+           Version="$(var.Version)" UpgradeCode="$(var.UpgradeCode)" Language="1033" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer downstream version is already installed."/>
+    <MediaTemplate EmbedCab="yes"/>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Cryptomator-travertexs-$(var.Arch)"/>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder"/>
+    <Feature Id="Complete" Title="Cryptomator" Level="1">
+      <Files Directory="INSTALLFOLDER" Include="!(bindpath.image)\**">
+        <Exclude Files="!(bindpath.image)\Cryptomator.exe"/>
+      </Files>
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Id="Launcher" Source="!(bindpath.image)\Cryptomator.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Advertise="yes"
+                    Name="Cryptomator (travertexs $(var.Arch))" WorkingDirectory="INSTALLFOLDER"/>
+        </File>
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

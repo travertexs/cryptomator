@@ -1,0 +1,482 @@
+name: Build and release native Windows installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Unused downstream release version (major.minor.patch)
+        required: true
+        default: '1.20.0'
+      runtime_run_id:
+        description: Successful same-fork ARM64 Java 27 runtime workflow run
+        required: true
+        default: '43341806757'
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: downstream-windows-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  APP_VERSION: ${{ inputs.version || '1.20.0' }}
+  PACKAGE_VERSION: ${{ inputs.version || '1.20.0' }}
+  RUNTIME_RUN_ID: ${{ inputs.runtime_run_id || '43341806757' }}
+
+jobs:
+  build:
+    if: github.repository == 'travertexs/cryptomator' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[windows-release]'))
+    name: Build, install and test Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            javaArch: aarch64
+            os: windows-11-arm
+          - arch: x64
+            javaArch: x64
+            os: windows-2025
+    env:
+      TARGET_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check target release version
+        shell: pwsh
+        run: |
+          if ($env:APP_VERSION -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,5}$') { throw 'Expected a numeric release version.' }
+          $v = [version]$env:APP_VERSION
+          if ($v.Major -gt 255 -or $v.Minor -gt 255 -or $v.Build -gt 65535) { throw 'Version exceeds Windows Installer limits.' }
+
+      - name: Resolve Windows integration version
+        id: integrations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pom = Get-Content -LiteralPath pom.xml -Raw
+          if ($pom -notmatch '<cryptomator\.integrations\.win\.version>([^<]+)</cryptomator\.integrations\.win\.version>') {
+            throw 'Unable to resolve the integrations-win version from pom.xml.'
+          }
+          "version=$($Matches[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Check out matching Windows integration source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: cryptomator/integrations-win
+          ref: ${{ steps.integrations.outputs.version }}
+          path: .arm64/integrations-win
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Get matching native JavaFX 25 jmods
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: liberica
+          java-version: '25.0.5'
+          java-package: jdk+fx
+          architecture: ${{ matrix.javaArch }}
+      - name: Verify and stage native JavaFX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory fx-jmods | Out-Null
+          Copy-Item "$env:JAVA_HOME/jmods/javafx*.jmod" fx-jmods/
+          $fx = (& "$env:JAVA_HOME/bin/jmod.exe" describe fx-jmods/javafx.base.jmod | Select-Object -First 1)
+          $required = ([xml](Get-Content pom.xml -Raw)).project.properties.'javafx.version'
+          if ($fx -notmatch ('^javafx\.base@' + [regex]::Escape($required) + '(?:$|[.+-])')) { throw "JavaFX version mismatch: $fx vs $required" }
+
+      - name: Get x64 Java 27 runtime and compiler
+        if: matrix.arch == 'x64'
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: '27.0.1'
+          architecture: x64
+          cache: maven
+      - name: Verify ARM64 runtime source, workflow and patch
+        if: matrix.arch == 'arm64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNTIME_RUN_ID -notmatch '^[0-9]+$') { throw 'Invalid runtime run ID' }
+          function Read-Api($uri) {
+            $body = & gh api $uri
+            if ($LASTEXITCODE) { throw "Failed to read $uri" }
+            $body | ConvertFrom-Json
+          }
+          $uri = "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:RUNTIME_RUN_ID"
+          $deadline = (Get-Date).AddMinutes(85)
+          do {
+            $r = Read-Api $uri
+            if ($r.head_repository.full_name -ne $env:GITHUB_REPOSITORY -or $r.head_branch -ne 'develop' -or $r.path -ne '.github/workflows/windows-runtime.yml' -or $r.event -notin @('workflow_dispatch','push')) { throw 'Untrusted runtime workflow or ref.' }
+            if ($r.status -eq 'completed') { break }
+            if ((Get-Date) -gt $deadline) { throw 'Runtime timed out.' }
+            Start-Sleep -Seconds 30
+          } while ($true)
+          if ($r.conclusion -ne 'success') { throw "Runtime did not succeed: $($r.html_url)" }
+          foreach ($path in @('.github/workflows/windows-runtime.yml','dist/win/arm64/hotspot-hello-exceptions.patch')) {
+            $blob = Read-Api "repos/$env:GITHUB_REPOSITORY/contents/${path}?ref=$($r.head_sha)"
+            if ($blob.sha -ne (git rev-parse "HEAD:$path")) { throw "Runtime build input changed: $path" }
+          }
+
+      - name: Download verified ARM64 runtime and corresponding source
+        if: matrix.arch == 'arm64'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: patched-openjdk-arm64
+          path: .arm64/runtime-build
+          run-id: ${{ env.RUNTIME_RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Activate ARM64 Java 27 runtime and compiler
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $jdk = Join-Path $env:GITHUB_WORKSPACE '.arm64/patched-jdk'
+          Expand-Archive .arm64/runtime-build/openjdk-arm64.zip $jdk
+          & "$jdk/bin/java.exe" -version
+          if ($LASTEXITCODE) { throw 'ARM64 runtime did not start.' }
+          "JAVA_HOME=$jdk" >> $env:GITHUB_ENV
+          "$jdk/bin" >> $env:GITHUB_PATH
+
+      - name: Build native integration with Windows Hello thread isolation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory .arm64/probe -Force | Out-Null
+          $integrationSource = Join-Path $env:GITHUB_WORKSPACE '.arm64\integrations-win'
+          $patch = Join-Path $env:GITHUB_WORKSPACE 'dist\win\arm64\windows-hello-threading.patch'
+
+          & git -C $integrationSource apply --check $patch
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows Hello patch no longer applies to integrations-win.' }
+          & git -C $integrationSource apply $patch
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to apply the Windows Hello patch.' }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe is unavailable.' }
+          $vsPath = (& $vswhere -latest -products * -property installationPath).Trim()
+          if (-not $vsPath) { throw 'Visual Studio was not found.' }
+          $vcvars = Join-Path $vsPath ('VC\Auxiliary\Build\' + $(if ($env:TARGET_ARCH -eq 'arm64') { 'vcvarsarm64.bat' } else { 'vcvars64.bat' }))
+          if (-not (Test-Path -LiteralPath $vcvars)) { throw "ARM64 compiler environment is unavailable: $vcvars" }
+
+          New-Item -ItemType Directory -Path (Join-Path $integrationSource 'target') -Force | Out-Null
+
+          Push-Location $integrationSource
+          try {
+            $compileCommand = ('call "{0}" && make install ARCH={1}' -f $vcvars, $env:TARGET_ARCH)
+            & cmd.exe /d /c $compileCommand
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to compile the patched ARM64 integration.' }
+          } finally {
+            Pop-Location
+          }
+
+          $dll = Join-Path $integrationSource "src\main\resources\integrations-$env:TARGET_ARCH.dll"
+          if (-not (Test-Path -LiteralPath $dll)) { throw 'The patched ARM64 integration DLL was not produced.' }
+      - name: Verify handled and fatal native exceptions under JNI
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = (& $vswhere -latest -products * -property installationPath).Trim()
+          $vcvars = Join-Path $vsPath ('VC\Auxiliary\Build\' + $(if ($env:TARGET_ARCH -eq 'arm64') { 'vcvarsarm64.bat' } else { 'vcvars64.bat' }))
+          New-Item -ItemType Directory .arm64/probe -Force | Out-Null
+          $compile = ('call "{0}" && cl /LD /I"{1}\include" /I"{1}\include\win32" dist\win\arm64\hotspot-exception-probe.cpp /Fo:.arm64\probe\exceptions.obj /link /OUT:.arm64\probe\exceptions.dll' -f $vcvars, $env:JAVA_HOME)
+          & cmd.exe /d /c $compile
+          if ($LASTEXITCODE -ne 0) { throw 'Exception regression DLL compilation failed.' }
+          & "$env:JAVA_HOME/bin/javac.exe" -d .arm64/probe dist/win/arm64/HotspotExceptionProbe.java
+          if ($LASTEXITCODE -ne 0) { throw 'Exception regression Java compilation failed.' }
+          $dll = (Resolve-Path .arm64/probe/exceptions.dll).Path
+          & "$env:JAVA_HOME/bin/java.exe" --enable-native-access=ALL-UNNAMED -Xcheck:jni -cp .arm64/probe HotspotExceptionProbe $dll handled
+          if ($LASTEXITCODE -ne 0) { throw 'Handled Windows cryptography exception killed the JVM.' }
+          foreach ($mode in @('unhandled', 'access-violation')) {
+            $log = Join-Path $env:GITHUB_WORKSPACE ".arm64/probe/$mode-fatal.log"
+            & "$env:JAVA_HOME/bin/java.exe" --enable-native-access=ALL-UNNAMED "-XX:ErrorFile=$log" -cp .arm64/probe HotspotExceptionProbe $dll $mode
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) { throw "The runtime incorrectly swallowed $mode." }
+            $exitHex = '{0:X8}' -f ($exitCode -band 0xFFFFFFFFL)
+            $expected = if ($mode -eq 'unhandled') { '0x80090016' } else { 'EXCEPTION_ACCESS_VIOLATION' }
+            $expectedExit = if ($mode -eq 'unhandled') { '80090016' } else { 'C0000005' }
+            $hasDiagnostic = (Test-Path -LiteralPath $log) -and [bool](Select-String -LiteralPath $log -SimpleMatch $expected)
+            # Windows can terminate with the original SEH code before HotSpot
+            # writes an hs_err log. Accept that exact fatal code, not any failure.
+            if (-not $hasDiagnostic -and $exitHex -ne $expectedExit) {
+              throw "Unexpected exit for ${mode}: 0x$exitHex, without the expected diagnostic."
+            }
+            Write-Host "${mode}: fatal exit 0x$exitHex; expected HotSpot diagnostic: $hasDiagnostic"
+          }
+          Write-Host 'Handled native errors survive; unhandled and access-violation errors remain fatal.'
+          exit 0
+      - name: Test Windows Hello native threading and JNI failures
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $integrationSource = Join-Path $env:GITHUB_WORKSPACE '.arm64\integrations-win'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = (& $vswhere -latest -products * -property installationPath).Trim()
+          $vcvars = Join-Path $vsPath ('VC\Auxiliary\Build\' + $(if ($env:TARGET_ARCH -eq 'arm64') { 'vcvarsarm64.bat' } else { 'vcvars64.bat' }))
+          Copy-Item -LiteralPath dist\win\arm64\windows-hello-threading-test.cpp -Destination $integrationSource
+          Push-Location $integrationSource
+          try {
+            $compile = ('call "{0}" && cl /EHsc /std:c++20 /W4 /I"src\main\headers" /I"{1}\include" /I"{1}\include\win32" windows-hello-threading-test.cpp /Fe:target\hello-threading-test.exe /Fo:target\hello-threading-test.obj /link crypt32.lib shell32.lib ole32.lib uuid.lib user32.lib Advapi32.lib windowsapp.lib' -f $vcvars, $env:JAVA_HOME)
+            & cmd.exe /d /c $compile
+            if ($LASTEXITCODE -ne 0) { throw 'Native regression probe compilation failed.' }
+            & .\target\hello-threading-test.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Native Windows Hello regression probe failed.' }
+          } finally {
+            Pop-Location
+          }
+          & "$env:JAVA_HOME\bin\javac.exe" -d .arm64\probe dist\win\arm64\WindowsHello.java
+          if ($LASTEXITCODE -ne 0) { throw 'JNI regression probe compilation failed.' }
+          $dll = Join-Path $integrationSource "src\main\resources\integrations-$env:TARGET_ARCH.dll"
+          & "$env:JAVA_HOME\bin\java.exe" --enable-native-access=ALL-UNNAMED -Xcheck:jni -cp .arm64\probe org.cryptomator.windows.keychain.WindowsHello $dll
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Filter 'hs_err_pid*.log' |
+              ForEach-Object { Get-Content -LiteralPath $_.FullName -TotalCount 160 }
+            throw 'Windows Hello JNI regression probe failed.'
+          }
+      - name: Compile application with Maven Wrapper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\mvnw.cmd -B versions:set "-DnewVersion=$env:APP_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to set the application version.' }
+
+          # Maven Central has no Windows ARM64 JavaFX classifier. These jars are
+          # compile-only here and excluded from target/mods; ARM64 JavaFX comes
+          # from the verified Liberica jmods used by jlink below.
+          & .\mvnw.cmd -B clean package -Pwin "-Djavafx.platform=win" -DskipTests
+          if ($LASTEXITCODE -ne 0) { throw 'Maven package failed.' }
+
+          Copy-Item -LiteralPath LICENSE.txt -Destination target
+          Get-ChildItem -LiteralPath target -Filter 'cryptomator-*.jar' |
+            Copy-Item -Destination target\mods
+      - name: Inject patched native integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $integrationJar = Get-ChildItem -LiteralPath target\mods -Filter 'integrations-win-*.jar' |
+            Select-Object -First 1
+          if ($null -eq $integrationJar) { throw 'integrations-win module is missing from target/mods.' }
+
+          $dllDir = Join-Path $env:GITHUB_WORKSPACE '.arm64\integrations-win\src\main\resources'
+          & "$env:JAVA_HOME\bin\jar.exe" --update --file $integrationJar.FullName -C $dllDir "integrations-$env:TARGET_ARCH.dll"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the patched ARM64 integration DLL.' }
+      - name: Create native runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $modules = @(
+            'java.base', 'java.desktop', 'java.instrument', 'java.logging',
+            'java.naming', 'java.net.http', 'java.scripting', 'java.sql', 'java.xml',
+            'javafx.base', 'javafx.graphics', 'javafx.controls', 'javafx.fxml',
+            'jdk.crypto.cryptoki', 'jdk.crypto.ec', 'jdk.crypto.mscapi',
+            'jdk.unsupported', 'jdk.accessibility', 'jdk.management.jfr', 'java.compiler'
+          ) -join ','
+
+          $jlinkArgs = @(
+            '--verbose',
+            '--output', 'runtime',
+            '--module-path', "$(if (Test-Path -LiteralPath "$env:JAVA_HOME/jmods/java.base.jmod") { "$env:JAVA_HOME/jmods;" })$env:GITHUB_WORKSPACE/fx-jmods",
+            '--add-modules', $modules,
+            '--strip-native-commands',
+            '--no-header-files',
+            '--no-man-pages',
+            '--strip-debug',
+            '--compress', 'zip-0'
+          )
+          & "$env:JAVA_HOME\bin\jlink.exe" @jlinkArgs
+          if ($LASTEXITCODE -ne 0) { throw 'jlink failed.' }
+      - name: Apply upstream certificate and Chinese font fixes
+        shell: pwsh
+        run: |
+          & "$env:JAVA_HOME/bin/java.exe" dist/common/RemoveDistrustedCaCerts.java runtime/lib/security/cacerts
+          if ($LASTEXITCODE) { throw 'Certificate cleanup failed.' }
+          & "$env:JAVA_HOME/bin/java.exe" dist/win/AddChineseFontConfigSequences.java runtime
+          if ($LASTEXITCODE) { throw 'Font configuration update failed.' }
+
+      - name: Create native application image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $jpackageArgs = @(
+            '--verbose',
+            '--type', 'app-image',
+            '--runtime-image', 'runtime',
+            '--input', 'target/libs',
+            '--module-path', 'target/mods',
+            '--module', 'org.cryptomator.desktop/org.cryptomator.launcher.Cryptomator',
+            '--dest', 'appdir',
+            '--name', 'Cryptomator',
+            '--vendor', 'Skymatic GmbH',
+            '--copyright', '(C) 2016 - 2026 Skymatic GmbH',
+            '--app-version', "$env:PACKAGE_VERSION",
+            '--java-options', '--enable-preview',
+            '--java-options', '--enable-native-access=javafx.graphics,org.cryptomator.frontend.fuse,org.cryptomator.jfuse.win,org.cryptomator.integrations.win,org.cryptomator.desktop',
+            '--java-options', '-Xss5m',
+            '--java-options', '-Xmx256m',
+            '--java-options', "-Dcryptomator.appVersion=$env:APP_VERSION",
+            '--java-options', '-Dfile.encoding=utf-8',
+            '--java-options', '-Djava.net.useSystemProxies=true',
+            '--java-options', '-Dcryptomator.adminConfigPath=C:/ProgramData/Cryptomator/config.properties',
+            '--java-options', '-Dcryptomator.logDir=@{localappdata}/Cryptomator',
+            '--java-options', '-Dcryptomator.settingsPath=@{appdata}/Cryptomator/settings.json;@{userhome}/AppData/Roaming/Cryptomator/settings.json',
+            '--java-options', '-Dcryptomator.p12Path=@{appdata}/Cryptomator/key.p12;@{userhome}/AppData/Roaming/Cryptomator/key.p12',
+            '--java-options', '-Dcryptomator.ipcSocketPath=@{localappdata}/Cryptomator/ipc.socket',
+            '--java-options', '-Dcryptomator.mountPointsDir=@{userhome}/Cryptomator',
+            '--java-options', '-Dcryptomator.loopbackAlias=cryptomator-vault',
+            '--java-options', '-Dcryptomator.showTrayIcon=true',
+            '--java-options', "-Dcryptomator.buildNumber=windows-$env:TARGET_ARCH-$env:GITHUB_RUN_NUMBER",
+            '--java-options', '-Dcryptomator.integrationsWin.autoStartShellLinkName=Cryptomator',
+            '--java-options', '-Dcryptomator.integrationsWin.keychainPaths=@{appdata}/Cryptomator/keychain.json;@{userhome}/AppData/Roaming/Cryptomator/keychain.json',
+            '--java-options', '-Dcryptomator.integrationsWin.windowsHelloKeychainPaths=@{appdata}/Cryptomator/windowsHelloKeychain.json',
+            '--java-options', '-Dcryptomator.disableUpdateCheck=true',
+            '--java-options', '-XX:ErrorFile=@{localappdata}/Cryptomator/cryptomator_crash.log',
+            '--java-options', '-Dcryptomator.hub.enableTrustOnFirstUse=true',
+            '--resource-dir', 'dist/win/resources',
+            '--icon', 'dist/win/resources/Cryptomator.ico',
+            '--add-launcher', 'Cryptomator (Debug)=dist/win/debug-launcher.properties'
+          )
+          & "$env:JAVA_HOME\bin\jpackage.exe" @jpackageArgs
+          if ($LASTEXITCODE -ne 0) { throw 'jpackage failed.' }
+
+          # The upstream contrib copy contains an x64-only legacy jnidispatch.dll.
+          # The current app no longer needs that loose DLL, so keep it out of the ARM64 image.
+          Get-ChildItem -LiteralPath dist\win\contrib -File |
+            Where-Object Name -NE 'jnidispatch.dll' |
+            Copy-Item -Destination appdir\Cryptomator
+
+          Copy-Item WINDOWS-ARM64.md appdir/Cryptomator/WINDOWS-DOWNSTREAM.txt
+          Copy-Item LICENSE.txt appdir/Cryptomator/LICENSE.txt
+      - name: Verify the launcher, runtime and Hello DLL architecture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Get-PeMachine([string] $Path) {
+            $stream = [IO.File]::OpenRead($Path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) {
+                throw "Not a PE file: $Path"
+              }
+              return $reader.ReadUInt16()
+            } finally {
+              $stream.Dispose()
+            }
+          }
+
+          $machineExpected = if ($env:TARGET_ARCH -eq 'arm64') { 0xAA64 } else { 0x8664 }
+          $files = @(
+            'appdir\Cryptomator\Cryptomator.exe',
+            'appdir\Cryptomator\Cryptomator (Debug).exe'
+          )
+          foreach ($name in @('jvm.dll', 'glass.dll', 'prism_d3d.dll')) {
+            $match = Get-ChildItem -LiteralPath appdir\Cryptomator\runtime -Recurse -File -Filter $name |
+              Select-Object -First 1
+            if ($null -eq $match) { throw "Missing runtime binary: $name" }
+            $files += $match.FullName
+          }
+
+          foreach ($file in $files) {
+            $machine = Get-PeMachine $file
+            if ($machine -ne $machineExpected) {
+              throw ('Wrong native PE machine for {0}; got 0x{1:X4}.' -f $file, $machine)
+            }
+            Write-Host ('Verified native PE: {0}' -f $file)
+          }
+
+          if (Test-Path -LiteralPath appdir\Cryptomator\jnidispatch.dll) {
+            throw 'The x64-only loose jnidispatch.dll must not be present in the ARM64 image.'
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $integrationJar = Get-ChildItem -LiteralPath appdir\Cryptomator\app\mods -Filter 'integrations-win-*.jar' |
+            Select-Object -First 1
+          if ($null -eq $integrationJar) { throw 'integrations-win module is missing.' }
+          $archive = [IO.Compression.ZipFile]::OpenRead($integrationJar.FullName)
+          try {
+            $entry = $archive.GetEntry("integrations-$env:TARGET_ARCH.dll")
+            if ($null -eq $entry) {
+              throw 'integrations-win does not contain integrations-arm64.dll.'
+            }
+            $patchedIntegration = Join-Path $env:RUNNER_TEMP 'cryptomator-integrations-arm64.dll'
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $patchedIntegration, $true)
+          } finally {
+            $archive.Dispose()
+          }
+
+          $machine = Get-PeMachine $patchedIntegration
+          if ($machine -ne $machineExpected) {
+            throw ('Wrong native PE machine for the Windows integration; got 0x{0:X4}.' -f $machine)
+          }
+          Write-Host 'Verified patched Windows Hello integration architecture.'
+
+      - name: Build MSI and test install, installed startup and uninstall
+        shell: pwsh
+        run: ./dist/win/downstream/installer-test.ps1 -Arch $env:TARGET_ARCH -Version $env:APP_VERSION
+      - name: Include corresponding modified OpenJDK sources
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: Copy-Item -LiteralPath .arm64/runtime-build/OpenJDK-27.0.1.0.3-windows-arm64-source.zip -Destination release/
+      - name: Upload tested packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            release/*.msi
+            release/*.zip
+            release/*.sha256
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: windows-*
+          path: packages
+          merge-multiple: true
+      - name: Verify complete asset set and publish regular fork release
+        working-directory: packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="windows-$APP_VERSION"
+          assets=()
+          for arch in arm64 x64; do
+            for type in msi zip; do
+              name="Cryptomator-$APP_VERSION-windows-$arch.$type"
+              test -s "$name"
+              sha256sum -c "$name.sha256"
+              assets+=("$name" "$name.sha256")
+            done
+          done
+          source=OpenJDK-27.0.1.0.3-windows-arm64-source.zip
+          test -s "$source"
+          assets+=("$source")
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo 'Refusing to replace an existing release tag.' >&2; exit 1
+          fi
+          notes="Regular, unofficial downstream Windows release built from the upstream development branch plus this fork's Windows Hello fixes. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. These unsigned MSIs install separately from upstream Cryptomator. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Cryptomator $APP_VERSION for Windows (ARM64 and x64)" --notes "$notes" --draft
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
