@@ -8,8 +8,8 @@ rid=443788845
 [[ "$(gh api "$api/git/ref/tags/$tag" --jq .object.sha)" == f0a4038aca5dae232bae5910f223e4c3ad38c462 ]]
 [[ "$(gh api "$api/releases/tags/$tag" --jq .id)" == "$rid" ]]
 files=(Cryptomator-1.20.0-SNAPSHOT-windows-arm64.msi Cryptomator-1.20.0-SNAPSHOT-windows-arm64.msi.sha256)
-old=(742516816 742516898)
-orig=(sha256:80344a3ab0e14ac7e9c9f860376c44646d6e9de5e54e3dc1e75327363e5c0f21 sha256:153b2af7bd75ab88c68240ce98e3a400d756b35b8f24c6aa47b1804b6cac0cdd)
+old=(742627401 742627474)
+orig=(sha256:49619302321105a6335da661101b0cae318c6d3a86d2db2766338a4edd576f97 sha256:2583e681a11fd77e32a60a1066e982c29e0827aeb194b9fee6c15af9783a286d)
 new=()
 confirmed=false
 rename_asset() { gh api -X PATCH "$api/releases/assets/$1" -f "name=$2" --silent; }
@@ -49,9 +49,9 @@ for i in "${!files[@]}"; do
   gh api "$api/releases/assets/${new[i]}" | jq -e --arg n "$f" --arg h "sha256:$(sha256sum "$f" | cut -d' ' -f1)" '.name==$n and .state=="uploaded" and .digest==$h' >/dev/null
 done
 gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' > "$RUNNER_TEMP/wizard-notes.md"
-sed -i "s/These unsigned MSIs install separately from upstream Cryptomator./The x64 MSI installs separately; the ARM64 MSI now uses the upstream install location and MSI family./" "$RUNNER_TEMP/wizard-notes.md"
+sed -i '/^ARM64 MSI packaging update:/d;s/The updated installers use architecture-only names and upgrade the previous MSIs in place./The x64 installer uses an architecture-only suffix./' "$RUNNER_TEMP/wizard-notes.md"
 echo >> "$RUNNER_TEMP/wizard-notes.md"
-echo "ARM64 MSI packaging update: the wizard now defaults to **C:\\Program Files\\Cryptomator**, uses the official MSI upgrade family, and migrates the old fork ARM64 installation. This is still an unofficial, unsigned build. Replacement of both the official 1.19.6 x64 MSI and the previous ARM64 MSI was tested on native Windows on Arm. The x64 MSI, portable ZIPs, application version and release tag are unchanged. [ARM64 installer source](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · [Migration tests](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)." >> "$RUNNER_TEMP/wizard-notes.md"
+echo "ARM64 MSI packaging update: **Cryptomator** uses the upstream name, icon, MSI family and default installation folder, **C:\\Program Files\\Cryptomator**. It replaces the official MSI (tested with 1.19.5.6584 and 1.19.6); a separate former fork installation remains untouched. Unofficial, unsigned downstream build. The x64 installer, portable ZIPs, app version and tag are unchanged. [Installer source](https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) · [Windows on Arm installer tests](https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)." >> "$RUNNER_TEMP/wizard-notes.md"
 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/wizard-notes.md"
 confirmed=true
 for id in "${old[@]}"; do gh api -X DELETE "$api/releases/assets/$id" --silent; done

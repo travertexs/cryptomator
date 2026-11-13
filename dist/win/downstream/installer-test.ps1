@@ -51,15 +51,16 @@ try {
   if (-not (Test-Path -LiteralPath (Join-Path $installed "app/mods/cryptomator-$Version.jar"))) { throw 'Installed app JAR version differs from upstream.' }
   function Get-ForkRegistration {
     Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object {
-      $_.Publisher -eq 'travertexs downstream' -and ($_.DisplayName -like "Cryptomator* ($Arch)" -or $_.DisplayName -like "Cryptomator* (travertexs $Arch)")
+      $_.Publisher -eq 'travertexs downstream' -and ($_.DisplayName -ceq $expectedName)
     }
   }
   function Assert-UpstreamRegistration {
     $entries = @(Get-ForkRegistration)
-    if ($entries.Count -ne 1 -or $entries[0].DisplayName -cne "Cryptomator $Version ($Arch)" -or $entries[0].DisplayVersion -cne $NumericVersion) {
+    if ($entries.Count -ne 1 -or $entries[0].DisplayVersion -cne $NumericVersion) {
       throw 'Expected exactly one registered installer with the correct upstream display name and numeric MSI version.'
     }
   }
+  $expectedName = if ($Arch -eq 'arm64') { 'Cryptomator' } else { "Cryptomator $Version ($Arch)" }
   Assert-UpstreamRegistration
   # Compare every installed payload byte to the architecture-checked app image.
   foreach ($file in Get-ChildItem -LiteralPath $image -Recurse -File -Force) {

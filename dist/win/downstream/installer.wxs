@@ -1,22 +1,31 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
-  <Package Name="Cryptomator $(var.AppVersion) ($(var.Arch))" Manufacturer="travertexs downstream"
+  <?if $(var.Arch) = "arm64" ?>
+    <?define DisplayName="Cryptomator" ?>
+    <?define ShortcutName="Cryptomator" ?>
+    <?define IconId="JpARPPRODUCTICON" ?>
+  <?else?>
+    <?define DisplayName="Cryptomator $(var.AppVersion) ($(var.Arch))" ?>
+    <?define ShortcutName="Cryptomator ($(var.Arch))" ?>
+    <?define IconId="CryptomatorIcon" ?>
+  <?endif?>
+  <Package Name="$(var.DisplayName)" Manufacturer="travertexs downstream"
            Version="$(var.Version)" UpgradeCode="$(var.UpgradeCode)" Language="1033" Scope="perMachine">
     <!-- A snapshot and its corrected build can have the same numeric MSI version. -->
     <?if $(var.Arch) = "arm64" ?>
     <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer Cryptomator version is already installed."/>
-    <!-- Migrate the retired ARM64 fork family using MSI ownership, never by deleting its directory. -->
-    <Upgrade Id="A7D02CE3-73DA-4D70-9DBF-8E7F7E0F7459">
-      <UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" Maximum="$(var.Version)" IncludeMaximum="yes" Property="LEGACYARM64" MigrateFeatures="no"/>
-      <UpgradeVersion Minimum="$(var.Version)" IncludeMinimum="no" OnlyDetect="yes" Property="NEWERLEGACYARM64"/>
-    </Upgrade>
-    <Launch Condition="Installed OR NOT NEWERLEGACYARM64" Message="A newer ARM64 Cryptomator installation exists."/>
+    <!-- Only the upstream MSI family is related. Earlier fork installations remain independent. -->
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute"/>
     <?else?>
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer downstream version is already installed."/>
     <?endif?>
     <MediaTemplate EmbedCab="yes"/>
-    <Icon Id="CryptomatorIcon" SourceFile="dist/win/resources/Cryptomator.ico"/>
-    <Property Id="ARPPRODUCTICON" Value="CryptomatorIcon"/>
+    <?if $(var.Arch) = "arm64" ?>
+    <!-- Upstream caches the launcher's PE icon resource, not a loose ICO file. -->
+    <Icon Id="$(var.IconId)" SourceFile="!(bindpath.image)\Cryptomator.exe"/>
+    <?else?>
+    <Icon Id="$(var.IconId)" SourceFile="dist/win/resources/Cryptomator.ico"/>
+    <?endif?>
+    <Property Id="ARPPRODUCTICON" Value="$(var.IconId)"/>
     <Property Id="STARTMENUSHORTCUT" Value="1" Secure="yes"/>
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER"/>
     <WixVariable Id="WixUIBannerBmp" Value="dist/win/resources/banner.bmp"/>
@@ -81,8 +90,8 @@
         <File Id="Launcher" Source="!(bindpath.image)\Cryptomator.exe" KeyPath="yes"/>
       </Component>
       <Component Id="MenuShortcut" Directory="INSTALLFOLDER" Guid="*" Condition="STARTMENUSHORTCUT">
-        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Target="[#Launcher]" Icon="CryptomatorIcon"
-                  Name="Cryptomator ($(var.Arch))" WorkingDirectory="INSTALLFOLDER"/>
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Target="[#Launcher]" Icon="$(var.IconId)"
+                  Name="$(var.ShortcutName)" WorkingDirectory="INSTALLFOLDER"/>
         <?if $(var.Arch) = "arm64" ?>
         <RegistryValue Root="HKCU" Key="Software\Skymatic GmbH\Cryptomator\$(var.Version)" Name="ProductCode" Value="[ProductCode]" Type="string" KeyPath="yes"/>
         <?else?>

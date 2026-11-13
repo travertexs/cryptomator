@@ -457,6 +457,14 @@ jobs:
           }
           Write-Host 'Verified patched Windows Hello integration architecture.'
 
+      - name: Fetch the matching old fork MSI for the side-by-side preservation test
+        if: env.ARM64_LAYOUT_REFRESH == 'true' && matrix.arch == 'arm64'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-arm64
+          path: .arm64/previous-fork
+          run-id: '43360198832'
+          github-token: ${{ github.token }}
       - name: Build MSI and test install, installed startup and uninstall
         shell: pwsh
         run: ./dist/win/downstream/installer-test.ps1 -Arch $env:TARGET_ARCH -Version $env:APP_VERSION -NumericVersion $env:PACKAGE_VERSION
@@ -527,6 +535,6 @@ jobs:
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
             echo 'Refusing to replace an existing release tag.' >&2; exit 1
           fi
-          notes="Regular, unofficial downstream Windows release built from the upstream development branch plus this fork's Windows Hello fixes. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. The unsigned ARM64 MSI uses upstream's default install directory and MSI family; it replaces compatible official MSI installations and the former fork ARM64 MSI. The fork x64 MSI remains separate. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          notes="Unofficial downstream Windows release. Choose ARM64 for Windows on Arm or x64 for Intel/AMD. The unsigned ARM64 MSI replaces compatible official Cryptomator MSI installations using the upstream name, icon and default install location. Separate older fork installations are not replaced. WinFsp is optional and not bundled. Both installers were installed, launched with Hello selected, and uninstalled on matching GitHub runners. Interactive biometric/PIN unlock requires an enrolled device. Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA · Build: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Cryptomator $APP_VERSION for Windows (ARM64 and x64)" --notes "$notes" --draft
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest

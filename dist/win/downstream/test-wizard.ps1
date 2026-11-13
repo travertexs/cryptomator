@@ -26,7 +26,7 @@ public static class WizardWindow {
   public static void Click(IntPtr w){if(!IsWindowEnabled(w)||!PostMessage(w,0x00F5,IntPtr.Zero,IntPtr.Zero))throw new Exception("Could not click enabled MSI control");}
 }
 '@
-$title = "Cryptomator $Version ($Arch) Setup"
+$title = if ($Arch -eq 'arm64') { 'Cryptomator Setup' } else { "Cryptomator $Version ($Arch) Setup" }
 $dir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "wizard-$Arch") -Force
 function Open-Wizard([string]$name) {
   $script:process = Start-Process msiexec.exe -ArgumentList "/i ""$Msi"" /qf /norestart /l*v ""$($dir.FullName)/$name.log""" -PassThru
@@ -84,12 +84,13 @@ Click-Button '^Next$' 'shortcut choice'
 Click-Button '^Install$' 'install confirmation'
 Finish-Wizard
 $menu = [Environment]::GetFolderPath('CommonPrograms')
-if (-not (Test-Path -LiteralPath (Join-Path $menu "Cryptomator ($Arch).lnk"))) { throw 'Expected renamed Start-menu shortcut not found.' }
+$link = Join-Path $menu $(if ($Arch -eq 'arm64') { 'Cryptomator.lnk' } else { "Cryptomator ($Arch).lnk" })
+if (-not (Test-Path -LiteralPath $link)) { throw "Expected Start-menu shortcut not found: $link" }
 Open-Wizard 'interactive-maintenance'
 Click-Button '^Next$' 'maintenance welcome'
 [void](Wait-Button '^Repair$' 'maintenance choices')
 Click-Button '^Remove$' 'maintenance remove choice'
 Click-Button '^Remove$' 'confirm removal'
 Finish-Wizard
-if (Test-Path -LiteralPath (Join-Path $menu "Cryptomator ($Arch).lnk")) { throw 'Uninstall left the shortcut behind.' }
+if (Test-Path -LiteralPath $link) { throw 'Uninstall left the shortcut behind.' }
 Write-Host "Full visible MSI wizard and maintenance walk-through passed ($Arch)."
