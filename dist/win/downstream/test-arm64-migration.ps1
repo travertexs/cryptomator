@@ -5,12 +5,21 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or [Runtime.InteropServices.RuntimeInformati
 $officialCode='{BDA45523-42B1-4CAE-9354-A45475ED4775}'
 $legacyCode='{A7D02CE3-73DA-4D70-9DBF-8E7F7E0F7459}'
 $wi=New-Object -ComObject WindowsInstaller.Installer
-function Codes($family) { foreach ($p in $wi.RelatedProducts($family)) { if ($p) { [string]$p } } }
+function Codes($family) {
+  $list=$wi.RelatedProducts($family)
+  for($i=0;$i -lt $list.Count;$i++){ [string]$list.Item($i) }
+}
 function MsiProp($file,$name) {
   $db=$wi.OpenDatabase($file,0)
   $query = 'SELECT `Value` FROM `Property` WHERE `Property`=''{0}''' -f $name
   $v=$db.OpenView($query)
-  try {$v.Execute(); $v.Fetch().StringData(1)} finally {$v.Close()}
+  try {
+    $null=$v.Execute()
+    $row=$v.Fetch()
+    if ($null -eq $row) { throw "No such MSI property: $name" }
+    $value=[string]$row.StringData(1)
+  } finally { $null=$v.Close() }
+  return $value
 }
 function Download-Msi($url,$name,$hash) {
   $p=Join-Path $env:RUNNER_TEMP $name
@@ -23,7 +32,10 @@ function Install-Command($verb,$file,$log) {
   if ($p.ExitCode -notin @(0,3010)) { Get-Content -LiteralPath $logPath -Tail 100; throw "MSI $verb failed ($($p.ExitCode)), $log" }
 }
 $up=Download-Msi 'https://github.com/cryptomator/cryptomator/releases/download/1.19.6/Cryptomator-1.19.6-x64.msi' 'official-1.19.6.msi' 'ad416a6dff6ad969c2c346a9050b650e49fe5da9ac30c948148ae6b8412ebbce'
-if ((MsiProp $up 'UpgradeCode') -ine $officialCode -or (MsiProp $Msi 'UpgradeCode') -ine $officialCode) { throw 'Product family differs from upstream' }
+$uFamily=MsiProp $up 'UpgradeCode'
+$aFamily=MsiProp $Msi 'UpgradeCode'
+Write-Host "MSI identity: official='$uFamily'; ARM64='$aFamily'; expected='$officialCode'."
+if ($uFamily -ine $officialCode -or $aFamily -ine $officialCode) { throw 'Product family differs from upstream' }
 $newCode=MsiProp $Msi 'ProductCode'
 if ((MsiProp $up 'ProductCode') -ieq $newCode) { throw 'An upstream ProductCode must not be reused.' }
 $cases=@('official')
