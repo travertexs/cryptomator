@@ -253,11 +253,30 @@ jobs:
           & .\mvnw.cmd -B versions:set "-DnewVersion=$env:APP_VERSION"
           if ($LASTEXITCODE -ne 0) { throw 'Unable to set the application version.' }
 
-          # Maven Central has no Windows ARM64 JavaFX classifier. These jars are
-          # compile-only here and excluded from target/mods; ARM64 JavaFX comes
-          # from the verified Liberica jmods used by jlink below.
-          & .\mvnw.cmd -B clean package -Pwin "-Djavafx.platform=win" -DskipTests
+          # x64 uses upstream Maven platform detection. Windows ARM64 has no
+          # Central classifier: select the Windows compile-only API jars directly
+          # in this disposable checkout rather than activating OpenJFX's recursive
+          # javafx.platform.custom property. No such jar belongs in the image.
+          if ($env:TARGET_ARCH -eq 'arm64') {
+            $pom = [xml](Get-Content pom.xml -Raw)
+            foreach ($dep in $pom.project.dependencies.dependency | Where-Object groupId -eq 'org.openjfx') {
+              $cls = $pom.CreateElement('classifier',$dep.NamespaceURI)
+              $cls.InnerText = 'win'
+              [void]$dep.AppendChild($cls)
+              $ex = $pom.CreateElement('exclusions',$dep.NamespaceURI)
+              $one = $pom.CreateElement('exclusion',$dep.NamespaceURI)
+              foreach ($pair in @('groupId=org.openjfx','artifactId=*')) {
+                $key,$value = $pair.Split('=')
+                $e = $pom.CreateElement($key,$dep.NamespaceURI); $e.InnerText = $value
+                [void]$one.AppendChild($e)
+              }
+              [void]$ex.AppendChild($one); [void]$dep.AppendChild($ex)
+            }
+            $pom.Save((Resolve-Path pom.xml).Path)
+          }
+          & .\mvnw.cmd -B clean package -Pwin -DskipTests
           if ($LASTEXITCODE -ne 0) { throw 'Maven package failed.' }
+          if (Get-ChildItem target/mods,target/libs -Filter 'javafx-*.jar' -ErrorAction SilentlyContinue) { throw 'Compile-only JavaFX jar leaked into the runtime image.' }
 
           Copy-Item -LiteralPath LICENSE.txt -Destination target
           Get-ChildItem -LiteralPath target -Filter 'cryptomator-*.jar' |
