@@ -1,0 +1,23 @@
+name: Check official Windows MSI identity
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths: ['.github/workflows/inspect-official-msi.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'travertexs/cryptomator'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Read tables from the unmodified official MSI
+        shell: pwsh
+        run: |
+          $url='https://github.com/cryptomator/cryptomator/releases/download/1.19.6/Cryptomator-1.19.6-x64.msi'
+          Invoke-WebRequest $url -OutFile reference.msi
+          if ((Get-FileHash reference.msi).Hash -ine 'ad416a6dff6ad969c2c346a9050b650e49fe5da9ac30c948148ae6b8412ebbce') { throw 'Unexpected reference MSI digest.' }
+          & ./dist/win/downstream/official-msi-reference.ps1 -Msi (Resolve-Path reference.msi).Path
